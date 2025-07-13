@@ -34,6 +34,9 @@ from .const import (
     SERVICE_ADD_INCOME_ITEM,
     SERVICE_ADD_EXPENSE_ITEM,
     SERVICE_REMOVE_ITEM,
+    SERVICE_ADD_RECURRING_INCOME,
+    SERVICE_ADD_RECURRING_EXPENSE,
+    SERVICE_REMOVE_RECURRING_ITEM,
     ATTR_ACCOUNT,
     ATTR_AMOUNT,
     ATTR_MONTH,
@@ -42,6 +45,8 @@ from .const import (
     ATTR_ITEM_ID,
     ATTR_ITEMS,
     ATTR_CATEGORY,
+    ATTR_RECURRING,
+    ATTR_DAY_OF_MONTH,
     DATA_STORAGE_FILE,
     EVENT_MONTH_CHANGED,
 )
@@ -73,6 +78,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "balance": 0, 
             "income_items": [], 
             "expense_items": [], 
+            "recurring_income": [],
+            "recurring_expenses": [],
             "history": {}
         } for account in accounts},
     }
@@ -217,6 +224,40 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
         account_data["balance"] = 0
         account_data["income_items"] = []
         account_data["expense_items"] = []
+        
+        # Apply recurring items for the new month
+        if "recurring_income" in account_data:
+            for recurring_item in account_data["recurring_income"]:
+                # Create a new income item from the recurring template
+                new_item = {
+                    "id": str(uuid.uuid4()),
+                    "amount": recurring_item["amount"],
+                    "description": recurring_item["description"],
+                    "category": recurring_item["category"],
+                    "timestamp": datetime.now().isoformat(),
+                    "recurring_id": recurring_item["id"],  # Reference to the recurring item
+                }
+                
+                account_data["income_items"].append(new_item)
+                account_data["income"] += new_item["amount"]
+                
+        if "recurring_expenses" in account_data:
+            for recurring_item in account_data["recurring_expenses"]:
+                # Create a new expense item from the recurring template
+                new_item = {
+                    "id": str(uuid.uuid4()),
+                    "amount": recurring_item["amount"],
+                    "description": recurring_item["description"],
+                    "category": recurring_item["category"],
+                    "timestamp": datetime.now().isoformat(),
+                    "recurring_id": recurring_item["id"],  # Reference to the recurring item
+                }
+                
+                account_data["expense_items"].append(new_item)
+                account_data["expenses"] += new_item["amount"]
+        
+        # Update balance after applying recurring items
+        account_data["balance"] = account_data["income"] - account_data["expenses"]
         
         # Update in memory
         hass.data[DOMAIN][entry.entry_id]["data"][account] = account_data
@@ -507,6 +548,175 @@ def register_services(hass: HomeAssistant):
         })
     )
     
+    async def handle_add_recurring_income(call):
+        """Handle the add_recurring_income service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        amount = call.data.get(ATTR_AMOUNT, 0)
+        description = call.data.get(ATTR_DESCRIPTION, "")
+        category = call.data.get(ATTR_CATEGORY, "")
+        day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
+        item_id = str(uuid.uuid4())
+        
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Create new recurring item
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": description,
+                    "category": category,
+                    "day_of_month": day_of_month,
+                    "created_at": datetime.now().isoformat(),
+                }
+                
+                # Add to recurring income items
+                if "recurring_income" not in entry_data["data"][account]:
+                    entry_data["data"][account]["recurring_income"] = []
+                
+                entry_data["data"][account]["recurring_income"].append(item)
+                
+                # Create an actual income item for the current month if we're before or on the specified day
+                current_day = datetime.now().day
+                if current_day <= day_of_month:
+                    new_item = {
+                        "id": str(uuid.uuid4()),
+                        "amount": amount,
+                        "description": description,
+                        "category": category,
+                        "timestamp": datetime.now().isoformat(),
+                        "recurring_id": item_id,
+                    }
+                    
+                    # Add to income items
+                    if "income_items" not in entry_data["data"][account]:
+                        entry_data["data"][account]["income_items"] = []
+                    
+                    entry_data["data"][account]["income_items"].append(new_item)
+                    
+                    # Update total income
+                    entry_data["data"][account]["income"] = sum(
+                        item["amount"] for item in entry_data["data"][account]["income_items"]
+                    )
+                    
+                    # Update balance
+                    entry_data["data"][account]["balance"] = (
+                        entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
+                    )
+                
+                # Save the updated data
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                
+                # Notify sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                return
+        
+        _LOGGER.warning("Account %s not found", account)
+
+    async def handle_add_recurring_expense(call):
+        """Handle the add_recurring_expense service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        amount = call.data.get(ATTR_AMOUNT, 0)
+        description = call.data.get(ATTR_DESCRIPTION, "")
+        category = call.data.get(ATTR_CATEGORY, "")
+        day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
+        item_id = str(uuid.uuid4())
+        
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Create new recurring item
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": description,
+                    "category": category,
+                    "day_of_month": day_of_month,
+                    "created_at": datetime.now().isoformat(),
+                }
+                
+                # Add to recurring expense items
+                if "recurring_expenses" not in entry_data["data"][account]:
+                    entry_data["data"][account]["recurring_expenses"] = []
+                
+                entry_data["data"][account]["recurring_expenses"].append(item)
+                
+                # Create an actual expense item for the current month if we're before or on the specified day
+                current_day = datetime.now().day
+                if current_day <= day_of_month:
+                    new_item = {
+                        "id": str(uuid.uuid4()),
+                        "amount": amount,
+                        "description": description,
+                        "category": category,
+                        "timestamp": datetime.now().isoformat(),
+                        "recurring_id": item_id,
+                    }
+                    
+                    # Add to expense items
+                    if "expense_items" not in entry_data["data"][account]:
+                        entry_data["data"][account]["expense_items"] = []
+                    
+                    entry_data["data"][account]["expense_items"].append(new_item)
+                    
+                    # Update total expenses
+                    entry_data["data"][account]["expenses"] = sum(
+                        item["amount"] for item in entry_data["data"][account]["expense_items"]
+                    )
+                    
+                    # Update balance
+                    entry_data["data"][account]["balance"] = (
+                        entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
+                    )
+                
+                # Save the updated data
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                
+                # Notify sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                return
+        
+        _LOGGER.warning("Account %s not found", account)
+
+    async def handle_remove_recurring_item(call):
+        """Handle the remove_recurring_item service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        item_id = call.data.get(ATTR_ITEM_ID)
+        
+        if not item_id:
+            _LOGGER.warning("No item ID provided")
+            return
+            
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Check in recurring income items
+                if "recurring_income" in entry_data["data"][account]:
+                    for i, item in enumerate(entry_data["data"][account]["recurring_income"]):
+                        if item.get("id") == item_id:
+                            # Remove item
+                            entry_data["data"][account]["recurring_income"].pop(i)
+                            
+                            # Save and update
+                            entry = hass.config_entries.async_get_entry(entry_id)
+                            await save_data(hass, entry)
+                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                            return
+
+                # Check in recurring expense items
+                if "recurring_expenses" in entry_data["data"][account]:
+                    for i, item in enumerate(entry_data["data"][account]["recurring_expenses"]):
+                        if item.get("id") == item_id:
+                            # Remove item
+                            entry_data["data"][account]["recurring_expenses"].pop(i)
+                            
+                            # Save and update
+                            entry = hass.config_entries.async_get_entry(entry_id)
+                            await save_data(hass, entry)
+                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                            return
+        
+        _LOGGER.warning("Recurring item %s not found for account %s", item_id, account)
+
     # Register new item services
     hass.services.async_register(
         DOMAIN, 
@@ -536,6 +746,47 @@ def register_services(hass: HomeAssistant):
         DOMAIN, 
         SERVICE_REMOVE_ITEM, 
         handle_remove_item, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_ITEM_ID): cv.string,
+        })
+    )
+    
+    # Register recurring item services
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_ADD_RECURRING_INCOME, 
+        handle_add_recurring_income, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
+            vol.Optional(ATTR_DESCRIPTION, default=""): cv.string,
+            vol.Optional(ATTR_CATEGORY, default=""): cv.string,
+            vol.Optional(ATTR_DAY_OF_MONTH, default=1): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=31)
+            ),
+        })
+    )
+    
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_ADD_RECURRING_EXPENSE, 
+        handle_add_recurring_expense, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
+            vol.Optional(ATTR_DESCRIPTION, default=""): cv.string,
+            vol.Optional(ATTR_CATEGORY, default=""): cv.string,
+            vol.Optional(ATTR_DAY_OF_MONTH, default=1): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=31)
+            ),
+        })
+    )
+    
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_REMOVE_RECURRING_ITEM, 
+        handle_remove_recurring_item, 
         vol.Schema({
             vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
             vol.Required(ATTR_ITEM_ID): cv.string,

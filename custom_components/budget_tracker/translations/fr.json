@@ -145,6 +145,72 @@
           "description": "L'ID de l'élément à supprimer"
         }
       }
+    },
+    "add_recurring_income": {
+      "name": "Ajouter Revenu Récurrent",
+      "description": "Ajoute un nouvel élément de revenu récurrent à un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant du revenu"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description de l'élément de revenu"
+        },
+        "category": {
+          "name": "Catégorie",
+          "description": "Catégorie de l'élément de revenu"
+        },
+        "day_of_month": {
+          "name": "Jour du Mois",
+          "description": "Jour du mois où le revenu est perçu (1-31, par défaut: 1)"
+        }
+      }
+    },
+    "add_recurring_expense": {
+      "name": "Ajouter Dépense Récurrente",
+      "description": "Ajoute un nouvel élément de dépense récurrente à un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant de la dépense"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description de l'élément de dépense"
+        },
+        "category": {
+          "name": "Catégorie",
+          "description": "Catégorie de l'élément de dépense"
+        },
+        "day_of_month": {
+          "name": "Jour du Mois",
+          "description": "Jour du mois où la dépense est effectuée (1-31, par défaut: 1)"
+        }
+      }
+    },
+    "remove_recurring_item": {
+      "name": "Supprimer Élément Récurrent",
+      "description": "Supprime un élément récurrent de revenu ou de dépense par ID",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "item_id": {
+          "name": "ID de l'élément",
+          "description": "L'ID de l'élément récurrent à supprimer"
+        }
+      }
     }
   }
 }

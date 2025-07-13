@@ -145,6 +145,72 @@
           "description": "The ID of the item to remove"
         }
       }
+    },
+    "add_recurring_income": {
+      "name": "Add Recurring Income",
+      "description": "Adds a new recurring income item to a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Income amount"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description of the income item"
+        },
+        "category": {
+          "name": "Category",
+          "description": "Category of the income item"
+        },
+        "day_of_month": {
+          "name": "Day of Month",
+          "description": "Day of the month when the income occurs (1-31, default: 1)"
+        }
+      }
+    },
+    "add_recurring_expense": {
+      "name": "Add Recurring Expense",
+      "description": "Adds a new recurring expense item to a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Expense amount"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description of the expense item"
+        },
+        "category": {
+          "name": "Category",
+          "description": "Category of the expense item"
+        },
+        "day_of_month": {
+          "name": "Day of Month",
+          "description": "Day of the month when the expense occurs (1-31, default: 1)"
+        }
+      }
+    },
+    "remove_recurring_item": {
+      "name": "Remove Recurring Item",
+      "description": "Removes a recurring income or expense item by ID",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "item_id": {
+          "name": "Item ID",
+          "description": "The ID of the recurring item to remove"
+        }
+      }
     }
   }
 }

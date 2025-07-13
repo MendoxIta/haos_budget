@@ -29,6 +29,7 @@ from .const import (
     ATTR_MONTH,
     ATTR_YEAR,
     ATTR_ITEMS,
+    ATTR_RECURRING,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -139,7 +140,8 @@ class IncomeSensor(BudgetSensorBase):
     def extra_state_attributes(self):
         """Return entity specific state attributes."""
         return {
-            ATTR_ITEMS: self.account_data.get("income_items", [])
+            ATTR_ITEMS: self.account_data.get("income_items", []),
+            ATTR_RECURRING: self.account_data.get("recurring_income", [])
         }
 
 
@@ -166,7 +168,8 @@ class ExpensesSensor(BudgetSensorBase):
     def extra_state_attributes(self):
         """Return entity specific state attributes."""
         return {
-            ATTR_ITEMS: self.account_data.get("expense_items", [])
+            ATTR_ITEMS: self.account_data.get("expense_items", []),
+            ATTR_RECURRING: self.account_data.get("recurring_expenses", [])
         }
 
 

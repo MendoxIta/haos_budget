@@ -16,6 +16,7 @@ Il vous permet de saisir vos revenus et dépenses mensuelles, calcule automatiqu
 - 📈 Visualisation de l'historique des mois précédents
 - 👥 Prise en charge de multiples comptes (personnel, professionnel, etc.)
 - 📝 Suivi détaillé des revenus et dépenses avec descriptions et catégories
+- 🔁 Gestion des revenus et dépenses récurrents mensuels
 - 🌐 Interface Lovelace intégrée
 
 ## Installation
@@ -115,14 +116,49 @@ data:
   month: 12         # optionnel, 1-12
 ```
 
+#### `budget_tracker.add_recurring_income`
+Ajoute un élément de revenu récurrent mensuel.
+```yaml
+service: budget_tracker.add_recurring_income
+data:
+  account: default       # optionnel, "default" par défaut
+  amount: 1500           # montant du revenu
+  description: "Salaire" # description de la source de revenu
+  category: "Travail"    # catégorie (optionnel)
+  day_of_month: 5        # jour du mois où le revenu est perçu (1-31, par défaut: 1)
+```
+
+#### `budget_tracker.add_recurring_expense`
+Ajoute un élément de dépense récurrent mensuel.
+```yaml
+service: budget_tracker.add_recurring_expense
+data:
+  account: default         # optionnel, "default" par défaut
+  amount: 800              # montant de la dépense
+  description: "Loyer"     # description de la dépense
+  category: "Logement"     # catégorie (optionnel)
+  day_of_month: 15         # jour du mois où la dépense est effectuée (1-31, par défaut: 1)
+```
+
+#### `budget_tracker.remove_recurring_item`
+Supprime un élément récurrent de revenu ou de dépense par son ID.
+```yaml
+service: budget_tracker.remove_recurring_item
+data:
+  account: default                                # optionnel, "default" par défaut
+  item_id: "1234abcd-ef56-7890-ab12-345678cdef90" # ID de l'élément récurrent à supprimer
+```
+
 ### Entités
 
 Pour chaque compte, l'intégration crée plusieurs entités:
 
 - `sensor.budget_tracker_<account>_income_current_month`: Revenus du mois en cours
   - Inclut l'attribut `items` avec la liste détaillée des revenus
+  - Inclut l'attribut `recurring_items` avec la liste des revenus récurrents
 - `sensor.budget_tracker_<account>_expenses_current_month`: Dépenses du mois en cours
   - Inclut l'attribut `items` avec la liste détaillée des dépenses
+  - Inclut l'attribut `recurring_items` avec la liste des dépenses récurrentes
 - `sensor.budget_tracker_<account>_balance_current_month`: Solde du mois en cours
 
 Pour les données historiques:
@@ -131,6 +167,51 @@ Pour les données historiques:
 - `sensor.budget_tracker_<account>_expenses_<année>_<mois>`
   - Inclut l'historique des éléments de dépense
 - `sensor.budget_tracker_<account>_balance_<année>_<mois>`
+
+## Interface utilisateur Lovelace
+
+Cette intégration inclut une carte Lovelace personnalisée pour gérer visuellement vos comptes, revenus, dépenses et éléments récurrents.
+
+### Installation de la carte
+
+1. Copiez les fichiers du dossier `www` dans le dossier `www` de votre installation Home Assistant.
+2. Redémarrez votre frontend Home Assistant (Configuration > Paramètres > Redémarrer le frontend).
+
+### Utilisation de la carte
+
+Il existe deux façons d'ajouter la carte à votre interface :
+
+#### Méthode 1 : Interface utilisateur
+
+1. Allez dans l'interface Lovelace.
+2. Cliquez sur "Modifier le dashboard".
+3. Cliquez sur "+ Ajouter une carte".
+4. Faites défiler jusqu'à "Budget Tracker Card" ou recherchez-la.
+5. Configurez la carte en sélectionnant vos entités de budget tracker.
+
+#### Méthode 2 : Configuration YAML
+
+Si vous utilisez l'éditeur YAML, voici un exemple de configuration :
+
+```yaml
+type: 'custom:budget-tracker-card'
+title: 'Suivi de Budget'
+entities:
+  - sensor.budget_tracker_default_income_current_month
+  - sensor.budget_tracker_default_expenses_current_month
+  - sensor.budget_tracker_default_balance_current_month
+```
+
+### Fonctionnalités de la carte
+
+La carte Budget Tracker offre plusieurs onglets pour gérer différents aspects de vos finances :
+
+1. **Vue d'ensemble** : Résumé de vos revenus, dépenses et solde actuels
+2. **Revenus** : Gestion détaillée de vos revenus
+3. **Dépenses** : Gestion détaillée de vos dépenses
+4. **Récurrents** : Gestion des revenus et dépenses récurrents mensuels
+
+Chaque onglet vous permet d'ajouter, modifier ou supprimer des éléments directement depuis l'interface.
 
 ## Exemples de Cartes Lovelace
 
