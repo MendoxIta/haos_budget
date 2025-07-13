@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime
 import json
 from pathlib import Path
@@ -30,10 +31,17 @@ from .const import (
     SERVICE_SET_INCOME,
     SERVICE_SET_EXPENSES,
     SERVICE_RESET_MONTH,
+    SERVICE_ADD_INCOME_ITEM,
+    SERVICE_ADD_EXPENSE_ITEM,
+    SERVICE_REMOVE_ITEM,
     ATTR_ACCOUNT,
     ATTR_AMOUNT,
     ATTR_MONTH,
     ATTR_YEAR,
+    ATTR_DESCRIPTION,
+    ATTR_ITEM_ID,
+    ATTR_ITEMS,
+    ATTR_CATEGORY,
     DATA_STORAGE_FILE,
     EVENT_MONTH_CHANGED,
 )
@@ -59,7 +67,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "storage_type": storage_type,
         "accounts": accounts,
-        "data": {account: {"income": 0, "expenses": 0, "balance": 0, "history": {}} for account in accounts},
+        "data": {account: {
+            "income": 0, 
+            "expenses": 0, 
+            "balance": 0, 
+            "income_items": [], 
+            "expense_items": [], 
+            "history": {}
+        } for account in accounts},
     }
 
     # Load existing data
@@ -192,12 +207,16 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
             "income": account_data.get("income", 0),
             "expenses": account_data.get("expenses", 0),
             "balance": account_data.get("balance", 0),
+            "income_items": account_data.get("income_items", []),
+            "expense_items": account_data.get("expense_items", []),
         }
         
         # Reset current values
         account_data["income"] = 0
         account_data["expenses"] = 0
         account_data["balance"] = 0
+        account_data["income_items"] = []
+        account_data["expense_items"] = []
         
         # Update in memory
         hass.data[DOMAIN][entry.entry_id]["data"][account] = account_data
@@ -232,7 +251,19 @@ def register_services(hass: HomeAssistant):
         
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
+                # For backward compatibility, set the total income
                 entry_data["data"][account]["income"] = amount
+                
+                # Clear existing income items and create a single item with the total
+                entry_data["data"][account]["income_items"] = [{
+                    "id": str(uuid.uuid4()),
+                    "amount": amount,
+                    "description": "Total Income",
+                    "category": "",
+                    "timestamp": datetime.now().isoformat(),
+                }] if amount > 0 else []
+                
+                # Update balance
                 entry_data["data"][account]["balance"] = (
                     amount - entry_data["data"][account].get("expenses", 0)
                 )
@@ -254,7 +285,19 @@ def register_services(hass: HomeAssistant):
         
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
+                # For backward compatibility, set the total expenses
                 entry_data["data"][account]["expenses"] = amount
+                
+                # Clear existing expense items and create a single item with the total
+                entry_data["data"][account]["expense_items"] = [{
+                    "id": str(uuid.uuid4()),
+                    "amount": amount,
+                    "description": "Total Expenses",
+                    "category": "",
+                    "timestamp": datetime.now().isoformat(),
+                }] if amount > 0 else []
+                
+                # Update balance
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account].get("income", 0) - amount
                 )
@@ -282,6 +325,154 @@ def register_services(hass: HomeAssistant):
                 if not account or account in entry.data.get(CONF_ACCOUNTS, []):
                     await archive_and_reset_data(hass, entry)
     
+    # Register services
+    async def handle_add_income_item(call):
+        """Handle the add_income_item service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        amount = call.data.get(ATTR_AMOUNT, 0)
+        description = call.data.get(ATTR_DESCRIPTION, "")
+        category = call.data.get(ATTR_CATEGORY, "")
+        item_id = str(uuid.uuid4())
+        
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Create new item
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": description,
+                    "category": category,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                
+                # Add to income items
+                if "income_items" not in entry_data["data"][account]:
+                    entry_data["data"][account]["income_items"] = []
+                
+                entry_data["data"][account]["income_items"].append(item)
+                
+                # Update total income
+                entry_data["data"][account]["income"] = sum(
+                    item["amount"] for item in entry_data["data"][account]["income_items"]
+                )
+                
+                # Update balance
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
+                )
+                
+                # Save the updated data
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                
+                # Notify sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                return
+        
+        _LOGGER.warning("Account %s not found", account)
+
+    async def handle_add_expense_item(call):
+        """Handle the add_expense_item service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        amount = call.data.get(ATTR_AMOUNT, 0)
+        description = call.data.get(ATTR_DESCRIPTION, "")
+        category = call.data.get(ATTR_CATEGORY, "")
+        item_id = str(uuid.uuid4())
+        
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Create new item
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": description,
+                    "category": category,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                
+                # Add to expense items
+                if "expense_items" not in entry_data["data"][account]:
+                    entry_data["data"][account]["expense_items"] = []
+                
+                entry_data["data"][account]["expense_items"].append(item)
+                
+                # Update total expenses
+                entry_data["data"][account]["expenses"] = sum(
+                    item["amount"] for item in entry_data["data"][account]["expense_items"]
+                )
+                
+                # Update balance
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
+                )
+                
+                # Save the updated data
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                
+                # Notify sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                return
+        
+        _LOGGER.warning("Account %s not found", account)
+
+    async def handle_remove_item(call):
+        """Handle the remove_item service."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        item_id = call.data.get(ATTR_ITEM_ID)
+        
+        if not item_id:
+            _LOGGER.warning("No item ID provided")
+            return
+            
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                # Check in income items
+                if "income_items" in entry_data["data"][account]:
+                    for i, item in enumerate(entry_data["data"][account]["income_items"]):
+                        if item.get("id") == item_id:
+                            # Remove item
+                            entry_data["data"][account]["income_items"].pop(i)
+                            
+                            # Update totals
+                            entry_data["data"][account]["income"] = sum(
+                                item["amount"] for item in entry_data["data"][account]["income_items"]
+                            )
+                            
+                            entry_data["data"][account]["balance"] = (
+                                entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
+                            )
+                            
+                            # Save and update
+                            entry = hass.config_entries.async_get_entry(entry_id)
+                            await save_data(hass, entry)
+                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                            return
+
+                # Check in expense items
+                if "expense_items" in entry_data["data"][account]:
+                    for i, item in enumerate(entry_data["data"][account]["expense_items"]):
+                        if item.get("id") == item_id:
+                            # Remove item
+                            entry_data["data"][account]["expense_items"].pop(i)
+                            
+                            # Update totals
+                            entry_data["data"][account]["expenses"] = sum(
+                                item["amount"] for item in entry_data["data"][account]["expense_items"]
+                            )
+                            
+                            entry_data["data"][account]["balance"] = (
+                                entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
+                            )
+                            
+                            # Save and update
+                            entry = hass.config_entries.async_get_entry(entry_id)
+                            await save_data(hass, entry)
+                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                            return
+        
+        _LOGGER.warning("Item %s not found for account %s", item_id, account)
+
     # Register services
     hass.services.async_register(
         DOMAIN, 
@@ -313,6 +504,41 @@ def register_services(hass: HomeAssistant):
             vol.Optional(ATTR_MONTH): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=12)
             ),
+        })
+    )
+    
+    # Register new item services
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_ADD_INCOME_ITEM, 
+        handle_add_income_item, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
+            vol.Optional(ATTR_DESCRIPTION, default=""): cv.string,
+            vol.Optional(ATTR_CATEGORY, default=""): cv.string,
+        })
+    )
+    
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_ADD_EXPENSE_ITEM, 
+        handle_add_expense_item, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
+            vol.Optional(ATTR_DESCRIPTION, default=""): cv.string,
+            vol.Optional(ATTR_CATEGORY, default=""): cv.string,
+        })
+    )
+    
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_REMOVE_ITEM, 
+        handle_remove_item, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Required(ATTR_ITEM_ID): cv.string,
         })
     )
 

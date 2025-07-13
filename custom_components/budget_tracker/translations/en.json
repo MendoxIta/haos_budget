@@ -87,6 +87,64 @@
           "description": "Month (1-12, optional)"
         }
       }
+    },
+    "add_income_item": {
+      "name": "Add Income Item",
+      "description": "Adds a new income item to a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Income amount"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description of the income item"
+        },
+        "category": {
+          "name": "Category",
+          "description": "Category of the income item"
+        }
+      }
+    },
+    "add_expense_item": {
+      "name": "Add Expense Item",
+      "description": "Adds a new expense item to a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Expense amount"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description of the expense item"
+        },
+        "category": {
+          "name": "Category",
+          "description": "Category of the expense item"
+        }
+      }
+    },
+    "remove_item": {
+      "name": "Remove Item",
+      "description": "Removes an income or expense item by ID",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "item_id": {
+          "name": "Item ID",
+          "description": "The ID of the item to remove"
+        }
+      }
     }
   }
 }

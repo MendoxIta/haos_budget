@@ -87,6 +87,64 @@
           "description": "Mois (1-12, optionnel)"
         }
       }
+    },
+    "add_income_item": {
+      "name": "Ajouter Revenu",
+      "description": "Ajoute un nouvel élément de revenu à un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant du revenu"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description de l'élément de revenu"
+        },
+        "category": {
+          "name": "Catégorie",
+          "description": "Catégorie de l'élément de revenu"
+        }
+      }
+    },
+    "add_expense_item": {
+      "name": "Ajouter Dépense",
+      "description": "Ajoute un nouvel élément de dépense à un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant de la dépense"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description de l'élément de dépense"
+        },
+        "category": {
+          "name": "Catégorie",
+          "description": "Catégorie de l'élément de dépense"
+        }
+      }
+    },
+    "remove_item": {
+      "name": "Supprimer Élément",
+      "description": "Supprime un élément de revenu ou de dépense par ID",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "item_id": {
+          "name": "ID de l'élément",
+          "description": "L'ID de l'élément à supprimer"
+        }
+      }
     }
   }
 }

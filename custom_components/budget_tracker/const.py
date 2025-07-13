@@ -3,7 +3,7 @@ from datetime import timedelta
 
 DOMAIN = "budget_tracker"
 NAME = "Budget Tracker"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Configuration
 CONF_ACCOUNTS = "accounts"
@@ -18,6 +18,9 @@ DEFAULT_STORAGE_TYPE = STORAGE_TYPE_FILE
 SERVICE_SET_INCOME = "set_income"
 SERVICE_SET_EXPENSES = "set_expenses"
 SERVICE_RESET_MONTH = "reset_month"
+SERVICE_ADD_INCOME_ITEM = "add_income_item"
+SERVICE_ADD_EXPENSE_ITEM = "add_expense_item"
+SERVICE_REMOVE_ITEM = "remove_item"
 
 # Attributes
 ATTR_ACCOUNT = "account"
@@ -27,6 +30,10 @@ ATTR_EXPENSES = "expenses"
 ATTR_BALANCE = "balance"
 ATTR_MONTH = "month"
 ATTR_YEAR = "year"
+ATTR_DESCRIPTION = "description"
+ATTR_ITEM_ID = "item_id"
+ATTR_ITEMS = "items"
+ATTR_CATEGORY = "category"
 
 # Sensor names
 INCOME_SENSOR = "income_current_month"

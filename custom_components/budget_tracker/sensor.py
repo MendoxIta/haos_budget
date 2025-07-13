@@ -28,6 +28,7 @@ from .const import (
     ATTR_BALANCE,
     ATTR_MONTH,
     ATTR_YEAR,
+    ATTR_ITEMS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -133,6 +134,13 @@ class IncomeSensor(BudgetSensorBase):
     def native_value(self) -> StateType:
         """Return the current month income value."""
         return self.account_data.get(ATTR_INCOME, 0)
+        
+    @property
+    def extra_state_attributes(self):
+        """Return entity specific state attributes."""
+        return {
+            ATTR_ITEMS: self.account_data.get("income_items", [])
+        }
 
 
 class ExpensesSensor(BudgetSensorBase):
@@ -153,6 +161,13 @@ class ExpensesSensor(BudgetSensorBase):
     def native_value(self) -> StateType:
         """Return the current month expenses value."""
         return self.account_data.get(ATTR_EXPENSES, 0)
+        
+    @property
+    def extra_state_attributes(self):
+        """Return entity specific state attributes."""
+        return {
+            ATTR_ITEMS: self.account_data.get("expense_items", [])
+        }
 
 
 class BalanceSensor(BudgetSensorBase):
@@ -234,6 +249,16 @@ class HistoricalIncomeSensor(HistoricalSensorBase):
         self._attr_unique_id = f"{DOMAIN}_{account}_income_{year}_{month:02d}"
         self._attr_name = f"Income {month_name} {year}"
         self._attr_icon = "mdi:cash-plus"
+        
+        # Get historical income items if they exist
+        year_month_key = f"{year}_{month:02d}"
+        account_data = hass.data[DOMAIN][entry.entry_id]["data"].get(account, {})
+        history = account_data.get("history", {})
+        month_data = history.get(year_month_key, {})
+        
+        # Add income items to attributes if they exist
+        if "income_items" in month_data:
+            self._attr_extra_state_attributes[ATTR_ITEMS] = month_data["income_items"]
 
 
 class HistoricalExpensesSensor(HistoricalSensorBase):
@@ -248,6 +273,16 @@ class HistoricalExpensesSensor(HistoricalSensorBase):
         self._attr_unique_id = f"{DOMAIN}_{account}_expenses_{year}_{month:02d}"
         self._attr_name = f"Expenses {month_name} {year}"
         self._attr_icon = "mdi:cash-minus"
+        
+        # Get historical expense items if they exist
+        year_month_key = f"{year}_{month:02d}"
+        account_data = hass.data[DOMAIN][entry.entry_id]["data"].get(account, {})
+        history = account_data.get("history", {})
+        month_data = history.get(year_month_key, {})
+        
+        # Add expense items to attributes if they exist
+        if "expense_items" in month_data:
+            self._attr_extra_state_attributes[ATTR_ITEMS] = month_data["expense_items"]
 
 
 class HistoricalBalanceSensor(HistoricalSensorBase):

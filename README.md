@@ -8,8 +8,6 @@ Le composant **Budget Tracker** est un outil simple mais puissant pour suivre vo
 
 Il vous permet de saisir vos revenus et dépenses mensuelles, calcule automatiquement le solde, et sauvegarde ces données à la fin de chaque mois pour consultation ultérieure.
 
-![Aperçu du Budget Tracker](images/overview.png)
-
 ## Caractéristiques
 
 - 💰 Suivi des revenus, dépenses et solde du mois en cours
@@ -17,6 +15,7 @@ Il vous permet de saisir vos revenus et dépenses mensuelles, calcule automatiqu
 - 🔄 Réinitialisation automatique au 1er du mois
 - 📈 Visualisation de l'historique des mois précédents
 - 👥 Prise en charge de multiples comptes (personnel, professionnel, etc.)
+- 📝 Suivi détaillé des revenus et dépenses avec descriptions et catégories
 - 🌐 Interface Lovelace intégrée
 
 ## Installation
@@ -55,10 +54,10 @@ La configuration se fait via l'interface utilisateur de Home Assistant:
 
 ### Services
 
-Le composant fournit trois services principaux:
+Le composant fournit plusieurs services:
 
 #### `budget_tracker.set_income`
-Définit le montant des revenus pour un compte.
+Définit le montant total des revenus pour un compte (méthode simple).
 ```yaml
 service: budget_tracker.set_income
 data:
@@ -67,12 +66,43 @@ data:
 ```
 
 #### `budget_tracker.set_expenses`
-Définit le montant des dépenses pour un compte.
+Définit le montant total des dépenses pour un compte (méthode simple).
 ```yaml
 service: budget_tracker.set_expenses
 data:
   account: default  # optionnel, "default" par défaut
   amount: 1800      # montant des dépenses
+```
+
+#### `budget_tracker.add_income_item`
+Ajoute un élément détaillé de revenu (nouvelle fonctionnalité).
+```yaml
+service: budget_tracker.add_income_item
+data:
+  account: default       # optionnel, "default" par défaut
+  amount: 1500           # montant du revenu
+  description: "Salaire" # description de la source de revenu
+  category: "Travail"    # catégorie (optionnel)
+```
+
+#### `budget_tracker.add_expense_item`
+Ajoute un élément détaillé de dépense (nouvelle fonctionnalité).
+```yaml
+service: budget_tracker.add_expense_item
+data:
+  account: default         # optionnel, "default" par défaut
+  amount: 800              # montant de la dépense
+  description: "Loyer"     # description de la dépense
+  category: "Logement"     # catégorie (optionnel)
+```
+
+#### `budget_tracker.remove_item`
+Supprime un élément de revenu ou de dépense par son ID (nouvelle fonctionnalité).
+```yaml
+service: budget_tracker.remove_item
+data:
+  account: default                                # optionnel, "default" par défaut
+  item_id: "1234abcd-ef56-7890-ab12-345678cdef90" # ID de l'élément à supprimer
 ```
 
 #### `budget_tracker.reset_month`
@@ -90,12 +120,16 @@ data:
 Pour chaque compte, l'intégration crée plusieurs entités:
 
 - `sensor.budget_tracker_<account>_income_current_month`: Revenus du mois en cours
+  - Inclut l'attribut `items` avec la liste détaillée des revenus
 - `sensor.budget_tracker_<account>_expenses_current_month`: Dépenses du mois en cours
+  - Inclut l'attribut `items` avec la liste détaillée des dépenses
 - `sensor.budget_tracker_<account>_balance_current_month`: Solde du mois en cours
 
 Pour les données historiques:
 - `sensor.budget_tracker_<account>_income_<année>_<mois>`
+  - Inclut l'historique des éléments de revenu
 - `sensor.budget_tracker_<account>_expenses_<année>_<mois>`
+  - Inclut l'historique des éléments de dépense
 - `sensor.budget_tracker_<account>_balance_<année>_<mois>`
 
 ## Exemples de Cartes Lovelace
