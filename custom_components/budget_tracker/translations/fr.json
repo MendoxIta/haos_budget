@@ -1,0 +1,92 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuration du Suivi de Budget",
+        "description": "Configurez vos comptes de suivi de budget",
+        "data": {
+          "name": "Nom",
+          "accounts": "Comptes (séparés par des virgules)",
+          "storage_type": "Type de stockage"
+        }
+      }
+    },
+    "error": {
+      "no_accounts": "Au moins un compte doit être spécifié"
+    },
+    "abort": {
+      "already_configured": "Cette intégration est déjà configurée"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options du Suivi de Budget",
+        "description": "Mettez à jour votre configuration de suivi de budget",
+        "data": {
+          "accounts": "Comptes (séparés par des virgules)",
+          "storage_type": "Type de stockage"
+        }
+      }
+    },
+    "error": {
+      "no_accounts": "Au moins un compte doit être spécifié"
+    }
+  },
+  "selector": {
+    "storage_type": {
+      "options": {
+        "file": "Stockage Fichier",
+        "input_text": "Entités Input Text"
+      }
+    }
+  },
+  "services": {
+    "set_income": {
+      "name": "Définir Revenus",
+      "description": "Définit le montant des revenus pour un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant des revenus"
+        }
+      }
+    },
+    "set_expenses": {
+      "name": "Définir Dépenses",
+      "description": "Définit le montant des dépenses pour un compte spécifique",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (par défaut: default)"
+        },
+        "amount": {
+          "name": "Montant",
+          "description": "Montant des dépenses"
+        }
+      }
+    },
+    "reset_month": {
+      "name": "Réinitialiser Mois",
+      "description": "Force une réinitialisation du mois et archive les données",
+      "fields": {
+        "account": {
+          "name": "Compte",
+          "description": "Nom du compte (optionnel)"
+        },
+        "year": {
+          "name": "Année",
+          "description": "Année (optionnel)"
+        },
+        "month": {
+          "name": "Mois",
+          "description": "Mois (1-12, optionnel)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Budget Tracker Configuration",
+        "description": "Set up your Budget Tracker accounts",
+        "data": {
+          "name": "Name",
+          "accounts": "Accounts (comma separated)",
+          "storage_type": "Storage Type"
+        }
+      }
+    },
+    "error": {
+      "no_accounts": "At least one account must be specified"
+    },
+    "abort": {
+      "already_configured": "This integration is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Budget Tracker Options",
+        "description": "Update your Budget Tracker configuration",
+        "data": {
+          "accounts": "Accounts (comma separated)",
+          "storage_type": "Storage Type"
+        }
+      }
+    },
+    "error": {
+      "no_accounts": "At least one account must be specified"
+    }
+  },
+  "selector": {
+    "storage_type": {
+      "options": {
+        "file": "File Storage",
+        "input_text": "Input Text Entities"
+      }
+    }
+  },
+  "services": {
+    "set_income": {
+      "name": "Set Income",
+      "description": "Sets the income value for a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Income amount"
+        }
+      }
+    },
+    "set_expenses": {
+      "name": "Set Expenses",
+      "description": "Sets the expenses value for a specific account",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (default: default)"
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Expenses amount"
+        }
+      }
+    },
+    "reset_month": {
+      "name": "Reset Month",
+      "description": "Force a month reset and archive the data",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Account name (optional)"
+        },
+        "year": {
+          "name": "Year",
+          "description": "Year (optional)"
+        },
+        "month": {
+          "name": "Month",
+          "description": "Month (1-12, optional)"
+        }
+      }
+    }
+  }
+}
