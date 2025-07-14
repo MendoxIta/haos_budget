@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import voluptuous as vol
@@ -37,6 +37,7 @@ from .const import (
     SERVICE_ADD_RECURRING_INCOME,
     SERVICE_ADD_RECURRING_EXPENSE,
     SERVICE_REMOVE_RECURRING_ITEM,
+    SERVICE_CLEAR_MONTH_ITEMS,
     ATTR_ACCOUNT,
     ATTR_AMOUNT,
     ATTR_MONTH,
@@ -50,6 +51,7 @@ from .const import (
     DATA_STORAGE_FILE,
     EVENT_MONTH_CHANGED,
 )
+from .frontend_integration import setup_frontend_integration, notify_frontend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,6 +62,10 @@ CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Budget Tracker component."""
     hass.data.setdefault(DOMAIN, {})
+    
+    # Setup frontend integration (websocket API)
+    await setup_frontend_integration(hass)
+    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -514,6 +520,77 @@ def register_services(hass: HomeAssistant):
         
         _LOGGER.warning("Item %s not found for account %s", item_id, account)
 
+    async def handle_clear_month_items(call):
+        """Handle the clear_month_items service - Remove all entries without resetting the month."""
+        account = call.data.get(ATTR_ACCOUNT, "default")
+        clear_income = call.data.get("clear_income", True)
+        clear_expenses = call.data.get("clear_expenses", True)
+        category_filter = call.data.get(ATTR_CATEGORY)
+        
+        for entry_id, entry_data in hass.data[DOMAIN].items():
+            if account in entry_data["accounts"]:
+                account_data = entry_data["data"][account]
+                modified = False
+                
+                # Clear income items if requested
+                if clear_income and "income_items" in account_data:
+                    if category_filter:
+                        # Filter by category
+                        before_count = len(account_data["income_items"])
+                        account_data["income_items"] = [
+                            item for item in account_data["income_items"]
+                            if item.get(ATTR_CATEGORY) != category_filter
+                        ]
+                        if before_count != len(account_data["income_items"]):
+                            modified = True
+                    else:
+                        # Clear all
+                        if account_data["income_items"]:
+                            account_data["income_items"] = []
+                            modified = True
+                            
+                    # Recalculate total income
+                    account_data["income"] = sum(
+                        item["amount"] for item in account_data.get("income_items", [])
+                    )
+                
+                # Clear expense items if requested
+                if clear_expenses and "expense_items" in account_data:
+                    if category_filter:
+                        # Filter by category
+                        before_count = len(account_data["expense_items"])
+                        account_data["expense_items"] = [
+                            item for item in account_data["expense_items"]
+                            if item.get(ATTR_CATEGORY) != category_filter
+                        ]
+                        if before_count != len(account_data["expense_items"]):
+                            modified = True
+                    else:
+                        # Clear all
+                        if account_data["expense_items"]:
+                            account_data["expense_items"] = []
+                            modified = True
+                            
+                    # Recalculate total expenses
+                    account_data["expenses"] = sum(
+                        item["amount"] for item in account_data.get("expense_items", [])
+                    )
+                
+                # Update balance
+                account_data["balance"] = account_data.get("income", 0) - account_data.get("expenses", 0)
+                
+                if modified:
+                    # Save the updated data
+                    entry = hass.config_entries.async_get_entry(entry_id)
+                    await save_data(hass, entry)
+                    
+                    # Notify sensors to update
+                    async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                    _LOGGER.info("Cleared items for account %s", account)
+                return
+        
+        _LOGGER.warning("Account %s not found", account)
+
     # Register services
     hass.services.async_register(
         DOMAIN, 
@@ -792,6 +869,31 @@ def register_services(hass: HomeAssistant):
             vol.Required(ATTR_ITEM_ID): cv.string,
         })
     )
+    
+    # Register clear month items service
+    hass.services.async_register(
+        DOMAIN, 
+        SERVICE_CLEAR_MONTH_ITEMS, 
+        handle_clear_month_items, 
+        vol.Schema({
+            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
+            vol.Optional("clear_income", default=True): cv.boolean,
+            vol.Optional("clear_expenses", default=True): cv.boolean,
+            vol.Optional(ATTR_CATEGORY): cv.string,
+        })
+    )
 
 # Need to import this after function definitions to avoid circular imports
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+async def notify_data_update(hass, entry_id, account=None):
+    """Notify all components about data updates."""
+    # Use the dispatcher for sensor updates
+    async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+    
+    # Use the frontend integration helper to notify frontend components
+    event_data = {"entry_id": entry_id}
+    if account:
+        event_data["account"] = account
+        
+    notify_frontend(hass, f"{DOMAIN}_data_updated", event_data)

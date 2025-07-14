@@ -3,7 +3,7 @@ from datetime import timedelta
 
 DOMAIN = "budget_tracker"
 NAME = "Budget Tracker"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # Configuration
 CONF_ACCOUNTS = "accounts"
@@ -24,6 +24,7 @@ SERVICE_REMOVE_ITEM = "remove_item"
 SERVICE_ADD_RECURRING_INCOME = "add_recurring_income"
 SERVICE_ADD_RECURRING_EXPENSE = "add_recurring_expense"
 SERVICE_REMOVE_RECURRING_ITEM = "remove_recurring_item"
+SERVICE_CLEAR_MONTH_ITEMS = "clear_month_items"
 
 # Attributes
 ATTR_ACCOUNT = "account"

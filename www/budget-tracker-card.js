@@ -19,15 +19,40 @@ class BudgetTrackerCard extends HTMLElement {
     this._currentTab = 'overview';
     this._editingItem = null;
     this._isAddingItem = false;
+    this._recurringType = 'income'; // Pour différencier le type lors d'ajout/édition d'élément récurrent
+    this._entityListeners = new Map();
+    this._boundHandleEvent = this._handleEvent.bind(this);
   }
 
   set hass(hass) {
+    const oldHass = this._hass;
     this._hass = hass;
-    this._fetchData();
-    this._render();
+    
+    // Si premier appel ou changement de hass, s'abonner aux événements
+    if (!oldHass || oldHass.connection !== hass.connection) {
+      this._unsubscribeEvents();
+      this._subscribeEvents();
+    }
+    
+    // Ne refetch que si les données des entités ont changé
+    let shouldUpdate = false;
+    if (this._config && this._config.entities) {
+      for (const entityId of this._config.entities) {
+        if (!oldHass || !oldHass.states[entityId] || 
+            oldHass.states[entityId] !== hass.states[entityId]) {
+          shouldUpdate = true;
+          break;
+        }
+      }
+    }
+    
+    if (shouldUpdate) {
+      this._fetchData();
+      this._render();
+    }
   }
 
-  set config(config) {
+  setConfig(config) {
     if (!config.entities) {
       throw new Error("Vous devez définir au moins une entité de type 'budget_tracker'.");
     }
@@ -142,23 +167,28 @@ class BudgetTrackerCard extends HTMLElement {
       <ha-card>
         <div class="card-header">
           <div class="title">${this._config.title}</div>
-          <div class="account-selector">
-            <select @change="${this._handleAccountChange}">
-              ${this._accounts.map(acc => `
-                <option value="${acc.name}" ${acc.name === this._currentAccount ? 'selected' : ''}>
-                  ${acc.name.charAt(0).toUpperCase() + acc.name.slice(1)}
-                </option>
-              `).join('')}
-            </select>
+          <div class="header-actions">
+            <div class="account-selector">
+              <select>
+                ${this._accounts.map(acc => `
+                  <option value="${acc.name}" ${acc.name === this._currentAccount ? 'selected' : ''}>
+                    ${acc.name.charAt(0).toUpperCase() + acc.name.slice(1)}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <button class="refresh-button" title="Rafraîchir les données">
+              <ha-icon icon="mdi:refresh"></ha-icon>
+            </button>
           </div>
         </div>
         <div class="card-content">
           <div class="tabs-container">
             <div class="tabs">
-              <button class="${this._currentTab === 'overview' ? 'active' : ''}" @click="${() => this._handleTabChange('overview')}">Vue d'ensemble</button>
-              <button class="${this._currentTab === 'income' ? 'active' : ''}" @click="${() => this._handleTabChange('income')}">Revenus</button>
-              <button class="${this._currentTab === 'expenses' ? 'active' : ''}" @click="${() => this._handleTabChange('expenses')}">Dépenses</button>
-              <button class="${this._currentTab === 'recurring' ? 'active' : ''}" @click="${() => this._handleTabChange('recurring')}">Récurrents</button>
+              <button class="${this._currentTab === 'overview' ? 'active' : ''}">Vue d'ensemble</button>
+              <button class="${this._currentTab === 'income' ? 'active' : ''}">Revenus</button>
+              <button class="${this._currentTab === 'expenses' ? 'active' : ''}">Dépenses</button>
+              <button class="${this._currentTab === 'recurring' ? 'active' : ''}">Récurrents</button>
             </div>
           </div>
           ${content}
@@ -179,8 +209,62 @@ class BudgetTrackerCard extends HTMLElement {
           font-size: 1.5em;
           font-weight: 500;
         }
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
         .account-selector {
           min-width: 120px;
+        }
+        .refresh-button {
+          background: transparent;
+          border: none;
+          color: var(--primary-text-color);
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .refresh-button:hover {
+          background: var(--secondary-background-color);
+        }
+        .loading {
+          position: relative;
+        }
+        .loading::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(var(--rgb-primary-background-color, 255, 255, 255), 0.5);
+          z-index: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .loading::before {
+          content: "";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 30px;
+          height: 30px;
+          border: 3px solid var(--primary-color);
+          border-radius: 50%;
+          border-top-color: transparent;
+          animation: spin 1s linear infinite;
+          z-index: 2;
+        }
+        @keyframes spin {
+          to {
+            transform: translate(-50%, -50%) rotate(360deg);
+          }
         }
         .tabs-container {
           margin-bottom: 16px;
@@ -354,9 +438,62 @@ class BudgetTrackerCard extends HTMLElement {
             grid-template-columns: 1fr;
           }
         }
+
+        .confirmation-dialog {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 1000;
+        }
+
+        .dialog-content {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+          text-align: center;
+          color: #000000ff;
+        }
+
+        .dialog-actions {
+          margin-top: 20px;
+          display: flex;
+          justify-content: space-around;
+        }
+
+        .dialog-actions .btn {
+          padding: 10px 20px;
+          font-size: 1em;
+          cursor: pointer;
+        }
+
+        .dialog-actions .btn-danger {
+          background-color: #F44336;
+          color: white;
+          border: none;
+          border-radius: 4px;
+        }
+
+        .dialog-actions .btn.cancel {
+          background-color: #888;
+          color: white;
+          border: none;
+          border-radius: 4px;
+        }
+
+        .loading {
+          opacity: 0.5;
+          pointer-events: none;
+        }
       </style>
     `;
-
+    
     // Attacher les événements
     this._attachEventListeners();
   }
@@ -409,11 +546,6 @@ class BudgetTrackerCard extends HTMLElement {
           : `<div class="empty-state">Aucune dépense ce mois-ci</div>`
         }
       </div>
-
-      <div style="margin-top: 16px;">
-        <button class="btn" @click="${() => this._handleTabChange('income')}">Gérer les revenus</button>
-        <button class="btn" style="margin-left: 8px;" @click="${() => this._handleTabChange('expenses')}">Gérer les dépenses</button>
-      </div>
     `;
   }
 
@@ -426,12 +558,13 @@ class BudgetTrackerCard extends HTMLElement {
       return this._renderEditItemForm('income');
     }
 
+    const incomeCount = account.income_items.length;
     return `
-      <h3>Revenus du mois</h3>
+      <h3>Revenus du mois (${incomeCount})</h3>
       <div class="items-list">
-        ${account.income_items.length > 0 
+        ${incomeCount > 0 
           ? account.income_items.map(item => `
-            <div class="item">
+            <div class="item" data-id="${item.id}">
               <div class="item-details">
                 <div class="item-description">
                   ${item.description || 'Sans description'}
@@ -441,15 +574,16 @@ class BudgetTrackerCard extends HTMLElement {
               </div>
               <div class="item-amount income">+${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
-                <button class="btn btn-small" @click="${() => this._handleEditItem('income', item.id)}">Modifier</button>
-                <button class="btn btn-small btn-danger" @click="${() => this._handleRemoveItem('income', item.id)}">Supprimer</button>
+                <button class="btn btn-small">Modifier</button>
+                <button class="btn btn-small btn-danger">Supprimer</button>
               </div>
             </div>
           `).join('')
           : `<div class="empty-state">Aucun revenu ce mois-ci</div>`
         }
       </div>
-      <button class="btn" @click="${() => this._handleAddItem('income')}">Ajouter un revenu</button>
+      <button class="btn">Ajouter un revenu</button>
+      <button class="btn btn-danger" id="delete-all-income" style="margin-left: 8px;">Tout supprimer</button>
     `;
   }
 
@@ -462,12 +596,13 @@ class BudgetTrackerCard extends HTMLElement {
       return this._renderEditItemForm('expenses');
     }
 
+    const expenseCount = account.expense_items.length;
     return `
-      <h3>Dépenses du mois</h3>
+      <h3>Dépenses du mois (${expenseCount})</h3>
       <div class="items-list">
-        ${account.expense_items.length > 0 
+        ${expenseCount > 0 
           ? account.expense_items.map(item => `
-            <div class="item">
+            <div class="item" data-id="${item.id}">
               <div class="item-details">
                 <div class="item-description">
                   ${item.description || 'Sans description'}
@@ -477,15 +612,16 @@ class BudgetTrackerCard extends HTMLElement {
               </div>
               <div class="item-amount expenses">-${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
-                <button class="btn btn-small" @click="${() => this._handleEditItem('expenses', item.id)}">Modifier</button>
-                <button class="btn btn-small btn-danger" @click="${() => this._handleRemoveItem('expenses', item.id)}">Supprimer</button>
+                <button class="btn btn-small">Modifier</button>
+                <button class="btn btn-small btn-danger">Supprimer</button>
               </div>
             </div>
           `).join('')
           : `<div class="empty-state">Aucune dépense ce mois-ci</div>`
         }
       </div>
-      <button class="btn" @click="${() => this._handleAddItem('expenses')}">Ajouter une dépense</button>
+      <button class="btn">Ajouter une dépense</button>
+      <button class="btn btn-danger" id="delete-all-expenses" style="margin-left: 8px;">Tout supprimer</button>
     `;
   }
 
@@ -503,7 +639,7 @@ class BudgetTrackerCard extends HTMLElement {
       <div class="items-list">
         ${account.recurring_income.length > 0 
           ? account.recurring_income.map(item => `
-            <div class="item">
+            <div class="item" data-id="${item.id}">
               <span class="day-of-month">${item.day_of_month || 1}</span>
               <div class="item-details">
                 <div class="item-description">${item.description || 'Sans description'}</div>
@@ -511,8 +647,8 @@ class BudgetTrackerCard extends HTMLElement {
               </div>
               <div class="item-amount income">+${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
-                <button class="btn btn-small" @click="${() => this._handleEditRecurringItem('income', item.id)}">Modifier</button>
-                <button class="btn btn-small btn-danger" @click="${() => this._handleRemoveRecurringItem('income', item.id)}">Supprimer</button>
+                <button class="btn btn-small recurring">Modifier</button>
+                <button class="btn btn-small btn-danger recurring">Supprimer</button>
               </div>
             </div>
           `).join('')
@@ -524,7 +660,7 @@ class BudgetTrackerCard extends HTMLElement {
       <div class="items-list">
         ${account.recurring_expenses.length > 0 
           ? account.recurring_expenses.map(item => `
-            <div class="item">
+            <div class="item" data-id="${item.id}">
               <span class="day-of-month">${item.day_of_month || 1}</span>
               <div class="item-details">
                 <div class="item-description">${item.description || 'Sans description'}</div>
@@ -532,26 +668,25 @@ class BudgetTrackerCard extends HTMLElement {
               </div>
               <div class="item-amount expenses">-${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
-                <button class="btn btn-small" @click="${() => this._handleEditRecurringItem('expenses', item.id)}">Modifier</button>
-                <button class="btn btn-small btn-danger" @click="${() => this._handleRemoveRecurringItem('expenses', item.id)}">Supprimer</button>
+                <button class="btn btn-small recurring">Modifier</button>
+                <button class="btn btn-small btn-danger recurring">Supprimer</button>
               </div>
             </div>
           `).join('')
           : `<div class="empty-state">Aucune dépense récurrente</div>`
         }
       </div>
-      <button class="btn" @click="${() => this._handleAddRecurringIncome()}">Ajouter un revenu récurrent</button>
-      <button class="btn" style="margin-left: 8px;" @click="${() => this._handleAddRecurringExpense()}">Ajouter une dépense récurrente</button>
+      <button class="btn">Ajouter un revenu récurrent</button>
+      <button class="btn" style="margin-left: 8px;">Ajouter une dépense récurrente</button>
     `;
   }
 
   _renderAddItemForm(type) {
     const title = type === 'income' ? 'Ajouter un revenu' : 'Ajouter une dépense';
-    const serviceType = type === 'income' ? 'add_income_item' : 'add_expense_item';
     
     return `
       <h3>${title}</h3>
-      <div class="form">
+      <form class="form" onsubmit="return false;">
         <div class="form-group">
           <label for="description">Description</label>
           <input type="text" id="description" placeholder="Description" />
@@ -566,9 +701,9 @@ class BudgetTrackerCard extends HTMLElement {
             <input type="text" id="category" placeholder="Catégorie (optionnel)" />
           </div>
         </div>
-        <button class="btn" @click="${() => this._handleSubmitNewItem(serviceType)}">Enregistrer</button>
-        <button class="btn" style="background-color: #888; margin-left: 8px;" @click="${this._handleCancelAddEdit}">Annuler</button>
-      </div>
+        <button type="button" class="btn save-btn">Enregistrer</button>
+        <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
+      </form>
     `;
   }
 
@@ -586,7 +721,7 @@ class BudgetTrackerCard extends HTMLElement {
 
     return `
       <h3>${title}</h3>
-      <div class="form">
+      <form class="form" onsubmit="return false;">
         <div class="form-group">
           <label for="description">Description</label>
           <input type="text" id="description" placeholder="Description" value="${item.description || ''}" />
@@ -601,20 +736,19 @@ class BudgetTrackerCard extends HTMLElement {
             <input type="text" id="category" placeholder="Catégorie (optionnel)" value="${item.category || ''}" />
           </div>
         </div>
-        <button class="btn" @click="${() => this._handleUpdateItem(type)}">Mettre à jour</button>
-        <button class="btn" style="background-color: #888; margin-left: 8px;" @click="${this._handleCancelAddEdit}">Annuler</button>
-      </div>
+        <button type="button" class="btn update-btn">Mettre à jour</button>
+        <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
+      </form>
     `;
   }
 
   _renderAddRecurringForm() {
     const isIncome = this._currentTab === 'income';
     const title = isIncome ? 'Ajouter un revenu récurrent' : 'Ajouter une dépense récurrente';
-    const serviceType = isIncome ? 'add_recurring_income' : 'add_recurring_expense';
     
     return `
       <h3>${title}</h3>
-      <div class="form">
+      <form class="form" onsubmit="return false;">
         <div class="form-group">
           <label for="description">Description</label>
           <input type="text" id="description" placeholder="Description" />
@@ -633,9 +767,9 @@ class BudgetTrackerCard extends HTMLElement {
           <label for="day_of_month">Jour du mois</label>
           <input type="number" id="day_of_month" min="1" max="31" value="1" />
         </div>
-        <button class="btn" @click="${() => this._handleSubmitNewRecurringItem(serviceType)}">Enregistrer</button>
-        <button class="btn" style="background-color: #888; margin-left: 8px;" @click="${this._handleCancelAddEdit}">Annuler</button>
-      </div>
+        <button type="button" class="btn save-btn">Enregistrer</button>
+        <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
+      </form>
     `;
   }
 
@@ -657,7 +791,7 @@ class BudgetTrackerCard extends HTMLElement {
 
     return `
       <h3>${title}</h3>
-      <div class="form">
+      <form class="form" onsubmit="return false;">
         <div class="form-group">
           <label for="description">Description</label>
           <input type="text" id="description" placeholder="Description" value="${item.description || ''}" />
@@ -676,75 +810,192 @@ class BudgetTrackerCard extends HTMLElement {
           <label for="day_of_month">Jour du mois</label>
           <input type="number" id="day_of_month" min="1" max="31" value="${item.day_of_month || 1}" />
         </div>
-        <button class="btn" @click="${() => this._handleUpdateRecurringItem(isIncome ? 'income' : 'expenses')}">Mettre à jour</button>
-        <button class="btn" style="background-color: #888; margin-left: 8px;" @click="${this._handleCancelAddEdit}">Annuler</button>
-      </div>
+        <button type="button" class="btn update-btn">Mettre à jour</button>
+        <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
+      </form>
     `;
   }
 
-  _attachEventListeners() {
-    // Gestion du changement de compte
-    const accountSelector = this.shadowRoot.querySelector('.account-selector select');
-    if (accountSelector) {
-      accountSelector.addEventListener('change', this._handleAccountChange.bind(this));
-    }
+  _renderSensorsList() {
+    return this._config.entities.map((entity, index) => `
+      <div class="sensor-item">
+        <span>${entity}</span>
+        <button class="btn btn-small btn-danger" @click="${() => this._handleRemoveSensor(index)}">Supprimer</button>
+      </div>
+    `).join('');
+  }
 
+  _handleRemoveSensor(index) {
+    this._config.entities.splice(index, 1);
+    this._render();
+  }
+
+  _showConfirmationDialog(message, onConfirm) {
+    // Créer une boîte de dialogue personnalisée
+    const dialog = document.createElement('div');
+    dialog.classList.add('confirmation-dialog');
+    dialog.innerHTML = `
+      <div class="dialog-content">
+        <p>${message}</p>
+        <div class="dialog-actions">
+          <button class="btn btn-danger confirm">Confirmer</button>
+          <button class="btn cancel">Annuler</button>
+        </div>
+      </div>
+    `;
+
+    // Ajouter des gestionnaires d'événements
+    dialog.querySelector('.confirm').addEventListener('click', () => {
+      onConfirm();
+      dialog.remove();
+    });
+
+    dialog.querySelector('.cancel').addEventListener('click', () => {
+      dialog.remove();
+    });
+
+    // Ajouter la boîte de dialogue au shadowRoot
+    this.shadowRoot.appendChild(dialog);
+  }
+
+  _attachEventListeners() {
     // Gestion des onglets
     const tabButtons = this.shadowRoot.querySelectorAll('.tabs button');
-    tabButtons.forEach(button => {
+    tabButtons.forEach((button, index) => {
       button.addEventListener('click', () => {
-        const tab = button.textContent.toLowerCase().trim();
-        this._handleTabChange(tab);
+        const tabs = ['overview', 'income', 'expenses', 'recurring'];
+        this._handleTabChange(tabs[index]);
       });
     });
 
-    // Autres boutons et formulaires
-    const buttons = this.shadowRoot.querySelectorAll('button');
-    buttons.forEach(button => {
-      if (button.textContent === 'Ajouter un revenu') {
-        button.addEventListener('click', () => this._handleAddItem('income'));
-      } else if (button.textContent === 'Ajouter une dépense') {
-        button.addEventListener('click', () => this._handleAddItem('expenses'));
-      } else if (button.textContent === 'Ajouter un revenu récurrent') {
-        button.addEventListener('click', () => this._handleAddRecurringIncome());
-      } else if (button.textContent === 'Ajouter une dépense récurrente') {
-        button.addEventListener('click', () => this._handleAddRecurringExpense());
-      } else if (button.textContent === 'Annuler') {
-        button.addEventListener('click', this._handleCancelAddEdit.bind(this));
-      } else if (button.textContent === 'Enregistrer') {
-        if (this._currentTab === 'recurring') {
-          button.addEventListener('click', () => this._handleSubmitNewRecurringItem());
-        } else {
-          button.addEventListener('click', () => this._handleSubmitNewItem());
-        }
-      } else if (button.textContent === 'Mettre à jour') {
-        if (this._currentTab === 'recurring') {
-          button.addEventListener('click', () => this._handleUpdateRecurringItem());
-        } else {
-          button.addEventListener('click', () => this._handleUpdateItem());
-        }
-      }
-    });
+    // Gestion du sélecteur de compte
+    const accountSelector = this.shadowRoot.querySelector('.account-selector select');
+    if (accountSelector) {
+      accountSelector.addEventListener('change', (event) => {
+        this._currentAccount = event.target.value;
+        this._render();
+      });
+    }
+    
+    // Gestion du bouton de rafraîchissement
+    const refreshButton = this.shadowRoot.querySelector('.refresh-button');
+    if (refreshButton) {
+      refreshButton.addEventListener('click', () => {
+        this._refreshData();
+      });
+    }
 
-    // Boutons de modification et suppression
-    const editButtons = this.shadowRoot.querySelectorAll('.btn-small');
-    editButtons.forEach(button => {
-      if (button.textContent === 'Modifier') {
-        const itemId = button.getAttribute('data-id');
-        const type = button.getAttribute('data-type');
-        button.addEventListener('click', () => this._handleEditItem(type, itemId));
-      } else if (button.textContent === 'Supprimer') {
-        const itemId = button.getAttribute('data-id');
-        const type = button.getAttribute('data-type');
-        button.addEventListener('click', () => this._handleRemoveItem(type, itemId));
+    // Gestion du bouton 'Tout supprimer' revenus
+    const deleteAllIncomeBtn = this.shadowRoot.querySelector('#delete-all-income');
+    if (deleteAllIncomeBtn) {
+      deleteAllIncomeBtn.addEventListener('click', () => {
+        this._deleteAllItems('income');
+      });
+    }
+    // Gestion du bouton 'Tout supprimer' dépenses
+    const deleteAllExpensesBtn = this.shadowRoot.querySelector('#delete-all-expenses');
+    if (deleteAllExpensesBtn) {
+      deleteAllExpensesBtn.addEventListener('click', () => {
+        this._deleteAllItems('expenses');
+      });
+    }
+
+    this.shadowRoot.addEventListener('click', (e) => {
+      const target = e.target;
+      
+      // Gestion des boutons d'ajout
+      if (target.textContent === 'Ajouter un revenu') {
+        this._handleAddItem('income');
+        return;
+      }
+      
+      if (target.textContent === 'Ajouter une dépense') {
+        this._handleAddItem('expenses');
+        return;
+      }
+      
+      if (target.textContent === 'Ajouter un revenu récurrent') {
+        this._handleAddRecurringIncome();
+        return;
+      }
+      
+      if (target.textContent === 'Ajouter une dépense récurrente') {
+        this._handleAddRecurringExpense();
+        return;
+      }
+      
+      // Gestion des boutons d'annulation
+      if (target.textContent === 'Annuler') {
+        this._handleCancelAddEdit();
+        return;
+      }
+      
+      // Gestion des boutons d'enregistrement
+      if (target.textContent === 'Enregistrer' || target.classList.contains('save-btn')) {
+        if (this._currentTab === 'recurring') {
+          if (this._recurringType === 'income') {
+            this._handleSubmitNewRecurringItem();
+          } else {
+            this._handleSubmitNewRecurringItem();
+          }
+        } else if (this._currentTab === 'income') {
+          this._handleSubmitNewItem();
+        } else {
+          this._handleSubmitNewItem();
+        }
+        return;
+      }
+      
+      // Gestion des boutons de mise à jour
+      if (target.textContent === 'Mettre à jour' || target.classList.contains('update-btn')) {
+        if (this._currentTab === 'recurring') {
+          this._handleUpdateRecurringItem(this._recurringType);
+        } else {
+          this._handleUpdateItem(this._currentTab);
+        }
+        return;
+      }
+      
+      // Gestion des boutons modifier/supprimer
+      if (target.classList.contains('btn-small')) {
+        const itemRow = target.closest('.item');
+        let itemId;
+        
+        // Trouver l'ID de l'élément via l'attribut data-id
+        if (itemRow) {
+          itemId = itemRow.dataset.id;
+        }
+        
+        if (target.textContent === 'Modifier') {
+          if (target.classList.contains('recurring')) {
+            this._handleEditRecurringItem(this._currentTab, itemId);
+          } else {
+            this._handleEditItem(this._currentTab, itemId);
+          }
+        } else if (target.textContent === 'Supprimer') {
+          if (target.classList.contains('recurring')) {
+            this._handleRemoveRecurringItem(this._currentTab, itemId);
+          } else {
+            this._handleRemoveItem(this._currentTab, itemId);
+          }
+        }
+        return;
+      }
+      
+      // Gestion des boutons de gestion des revenus/dépenses sur la vue d'ensemble
+      if (target.textContent === 'Gérer les revenus') {
+        this._handleTabChange('income');
+        return;
+      }
+      
+      if (target.textContent === 'Gérer les dépenses') {
+        this._handleTabChange('expenses');
+        return;
       }
     });
   }
 
-  _handleAccountChange(e) {
-    this._currentAccount = e.target.value;
-    this._render();
-  }
+  // La méthode _handleAccountChange a été intégrée directement dans _attachEventListeners
 
   _handleTabChange(tab) {
     this._currentTab = tab;
@@ -761,13 +1012,15 @@ class BudgetTrackerCard extends HTMLElement {
 
   _handleAddRecurringIncome() {
     this._isAddingItem = true;
-    this._currentTab = 'income';
+    this._currentTab = 'recurring';
+    this._recurringType = 'income';
     this._render();
   }
 
   _handleAddRecurringExpense() {
     this._isAddingItem = true;
-    this._currentTab = 'expenses';
+    this._currentTab = 'recurring';
+    this._recurringType = 'expenses';
     this._render();
   }
 
@@ -789,7 +1042,7 @@ class BudgetTrackerCard extends HTMLElement {
     this._render();
   }
 
-  _handleSubmitNewItem(serviceType) {
+  _handleSubmitNewItem() {
     const description = this.shadowRoot.querySelector('#description').value;
     const amount = parseFloat(this.shadowRoot.querySelector('#amount').value);
     const category = this.shadowRoot.querySelector('#category').value;
@@ -799,25 +1052,31 @@ class BudgetTrackerCard extends HTMLElement {
       return;
     }
 
+    // Déterminer le service à appeler en fonction de l'onglet courant
+    const serviceType = this._currentTab === 'income' ? 'add_income_item' : 'add_expense_item';
+
     // Appel du service HA
     this._hass.callService('budget_tracker', serviceType, {
       account: this._currentAccount,
       amount: amount,
       description: description,
       category: category
-    });
+    }).then(() => {
+      // Réinitialiser le formulaire uniquement après la mise à jour réussie
+      this._isAddingItem = false;
 
-    // Réinitialiser le formulaire
-    this._isAddingItem = false;
-    
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
+      // Attendre un peu pour que les données soient mises à jour dans HA
+      setTimeout(() => {
+        this._fetchData();
+        this._render();
+      }, 500);
+    }).catch((error) => {
+      console.error('Erreur lors de l’ajout de l’élément :', error);
+      alert('Une erreur est survenue lors de l’ajout de l’élément.');
+    });
   }
 
-  _handleSubmitNewRecurringItem(serviceType) {
+  _handleSubmitNewRecurringItem() {
     const description = this.shadowRoot.querySelector('#description').value;
     const amount = parseFloat(this.shadowRoot.querySelector('#amount').value);
     const category = this.shadowRoot.querySelector('#category').value;
@@ -833,6 +1092,9 @@ class BudgetTrackerCard extends HTMLElement {
       return;
     }
 
+    // Déterminer le service à appeler en fonction du type
+    const serviceType = this._recurringType === 'income' ? 'add_recurring_income' : 'add_recurring_expense';
+
     // Appel du service HA
     this._hass.callService('budget_tracker', serviceType, {
       account: this._currentAccount,
@@ -840,17 +1102,20 @@ class BudgetTrackerCard extends HTMLElement {
       description: description,
       category: category,
       day_of_month: dayOfMonth
+    }).then(() => {
+      // Réinitialiser le formulaire uniquement après la mise à jour réussie
+      this._isAddingItem = false;
+      this._currentTab = 'recurring';
+      
+      // Attendre un peu pour que les données soient mises à jour dans HA
+      setTimeout(() => {
+        this._fetchData();
+        this._render();
+      }, 500);
+    }).catch((error) => {
+      console.error('Erreur lors de l\'ajout de l\'élément récurrent :', error);
+      alert('Une erreur est survenue lors de l\'ajout de l\'élément récurrent.');
     });
-
-    // Réinitialiser le formulaire
-    this._isAddingItem = false;
-    this._currentTab = 'recurring';
-    
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
   }
 
   _handleUpdateItem(type) {
@@ -865,30 +1130,34 @@ class BudgetTrackerCard extends HTMLElement {
 
     // Pour mettre à jour un élément, nous devons d'abord le supprimer puis en ajouter un nouveau
     // car l'API de budget_tracker ne fournit pas de service de mise à jour directe
+    const itemId = this._editingItem;
 
-    // Supprimer l'ancien élément
+    // Séquence d'appels asynchrones pour éviter les problèmes
     this._hass.callService('budget_tracker', 'remove_item', {
       account: this._currentAccount,
-      item_id: this._editingItem
+      item_id: itemId
+    }).then(() => {
+      // Une fois la suppression réussie, ajouter le nouvel élément
+      const serviceType = type === 'income' ? 'add_income_item' : 'add_expense_item';
+      return this._hass.callService('budget_tracker', serviceType, {
+        account: this._currentAccount,
+        amount: amount,
+        description: description,
+        category: category
+      });
+    }).then(() => {
+      // Réinitialiser le formulaire uniquement après la mise à jour réussie
+      this._editingItem = null;
+      
+      // Attendre un peu pour que les données soient mises à jour dans HA
+      setTimeout(() => {
+        this._fetchData();
+        this._render();
+      }, 500);
+    }).catch((error) => {
+      console.error('Erreur lors de la mise à jour de l\'élément:', error);
+      alert('Une erreur est survenue lors de la mise à jour de l\'élément.');
     });
-
-    // Ajouter le nouvel élément
-    const serviceType = type === 'income' ? 'add_income_item' : 'add_expense_item';
-    this._hass.callService('budget_tracker', serviceType, {
-      account: this._currentAccount,
-      amount: amount,
-      description: description,
-      category: category
-    });
-
-    // Réinitialiser le formulaire
-    this._editingItem = null;
-    
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
   }
 
   _handleUpdateRecurringItem(type) {
@@ -908,66 +1177,94 @@ class BudgetTrackerCard extends HTMLElement {
     }
 
     // Pour mettre à jour un élément récurrent, nous devons d'abord le supprimer puis en ajouter un nouveau
+    const itemId = this._editingItem;
     
-    // Supprimer l'ancien élément
+    // Séquence d'appels asynchrones pour éviter les problèmes
     this._hass.callService('budget_tracker', 'remove_recurring_item', {
       account: this._currentAccount,
-      item_id: this._editingItem
+      item_id: itemId
+    }).then(() => {
+      // Une fois la suppression réussie, ajouter le nouvel élément
+      const serviceType = type === 'income' ? 'add_recurring_income' : 'add_recurring_expense';
+      return this._hass.callService('budget_tracker', serviceType, {
+        account: this._currentAccount,
+        amount: amount,
+        description: description,
+        category: category,
+        day_of_month: dayOfMonth
+      });
+    }).then(() => {
+      // Réinitialiser le formulaire uniquement après la mise à jour réussie
+      this._editingItem = null;
+      this._currentTab = 'recurring';
+      
+      // Attendre un peu pour que les données soient mises à jour dans HA
+      setTimeout(() => {
+        this._fetchData();
+        this._render();
+      }, 500);
+    }).catch((error) => {
+      console.error('Erreur lors de la mise à jour de l\'élément récurrent:', error);
+      alert('Une erreur est survenue lors de la mise à jour de l\'élément récurrent.');
     });
-
-    // Ajouter le nouvel élément
-    const serviceType = type === 'income' ? 'add_recurring_income' : 'add_recurring_expense';
-    this._hass.callService('budget_tracker', serviceType, {
-      account: this._currentAccount,
-      amount: amount,
-      description: description,
-      category: category,
-      day_of_month: dayOfMonth
-    });
-
-    // Réinitialiser le formulaire
-    this._editingItem = null;
-    this._currentTab = 'recurring';
-    
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
   }
 
   _handleRemoveItem(type, itemId) {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cet élément ?')) {
-      return;
-    }
-    
-    this._hass.callService('budget_tracker', 'remove_item', {
-      account: this._currentAccount,
-      item_id: itemId
+    this._showConfirmationDialog('Êtes-vous sûr de vouloir supprimer cet élément ?', () => {
+      this._hass.callService('budget_tracker', 'remove_item', {
+        account: this._currentAccount,
+        item_id: itemId
+      }).then(() => {
+        console.log('Élément supprimé avec succès');
+        setTimeout(() => {
+          this._fetchData();
+          this._render();
+        }, 500);
+      }).catch((error) => {
+        console.error('Erreur lors de la suppression de l\'élément:', error);
+        alert('Une erreur est survenue lors de la suppression de l\'élément.');
+      });
     });
-
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
   }
 
   _handleRemoveRecurringItem(type, itemId) {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cet élément récurrent ?')) {
-      return;
-    }
-    
-    this._hass.callService('budget_tracker', 'remove_recurring_item', {
-      account: this._currentAccount,
-      item_id: itemId
+    this._showConfirmationDialog('Êtes-vous sûr de vouloir supprimer cet élément récurrent ?', () => {
+      this._hass.callService('budget_tracker', 'remove_recurring_item', {
+        account: this._currentAccount,
+        item_id: itemId
+      }).then(() => {
+        console.log('Élément supprimé avec succès');
+        setTimeout(() => {
+          this._fetchData();
+          this._render();
+        }, 500);  
+      }).catch((error) => {
+        console.error('Erreur lors de la suppression de l\'élément:', error);
+        alert('Une erreur est survenue lors de la suppression de l\'élément.');
+      });
     });
+  }
 
-    // Attendre un peu pour que les données soient mises à jour dans HA
-    setTimeout(() => {
-      this._fetchData();
-      this._render();
-    }, 500);
+  _deleteAllItems(type) {
+    const account = this._accounts.find(acc => acc.name === this._currentAccount);
+    const items = type === 'income' ? account.income_items : account.expense_items;
+    if (!items.length) return;
+    this._showConfirmationDialog(
+      `Êtes-vous sûr de vouloir supprimer toutes les ${type === 'income' ? 'revenus' : 'dépenses'} du mois ?`,
+      () => {
+        // Appel du service pour chaque item
+        items.forEach(item => {
+          this._hass.callService('budget_tracker', 'remove_item', {
+            account: this._currentAccount,
+            item_id: item.id
+          });
+        });
+        setTimeout(() => {
+          this._fetchData();
+          this._render();
+        }, 700);
+      }
+    );
   }
 
   // Fonction utilitaire pour formater les nombres en devise
@@ -979,24 +1276,133 @@ class BudgetTrackerCard extends HTMLElement {
     return 3;
   }
 
-  static getConfigElement() {
-    return document.createElement('budget-tracker-card-editor');
-  }
-
   static getStubConfig() {
     return {
       title: "Budget Tracker",
       entities: []
     };
   }
+
+  connectedCallback() {
+    // S'abonner aux événements quand la carte est connectée au DOM
+    if (this._hass) {
+      this._subscribeEvents();
+    }
+  }
+
+  disconnectedCallback() {
+    // Se désabonner des événements quand la carte est déconnectée
+    this._unsubscribeEvents();
+  }
+
+  _subscribeEvents() {
+    // Abonnement aux événements de budget_tracker
+    this._hass.connection.subscribeEvents(
+      this._boundHandleEvent,
+      'budget_tracker_month_changed'
+    );
+    this._hass.connection.subscribeEvents(
+      this._boundHandleEvent,
+      'budget_tracker_data_updated'
+    );
+
+    // Abonnement aux changements d'état des entités
+    this._subscribeEntityChanges();
+  }
+
+  _unsubscribeEvents() {
+    // Nettoyage des abonnements aux événements
+    if (this._hass) {
+      this._hass.connection.removeEventListener(
+        'budget_tracker_month_changed',
+        this._boundHandleEvent
+      );
+      this._hass.connection.removeEventListener(
+        'budget_tracker_data_updated',
+        this._boundHandleEvent
+      );
+    }
+
+    // Désabonnement des entités
+    this._entityListeners.forEach((unsub) => {
+      if (typeof unsub === 'function') {
+        unsub();
+      }
+    });
+    this._entityListeners.clear();
+  }
+
+  _handleEvent(event) {
+    // Traiter les événements personnalisés
+    if (event.type === 'budget_tracker_data_updated' || 
+        event.type === 'budget_tracker_month_changed') {
+      console.log(`Budget Tracker event received: ${event.type}`, event.data);
+      this._fetchData();
+      this._render();
+    }
+  }
+
+  _subscribeEntityChanges() {
+    // Se désabonner d'abord pour éviter les doublons
+    this._entityListeners.forEach((unsub) => {
+      if (typeof unsub === 'function') {
+        unsub();
+      }
+    });
+    this._entityListeners.clear();
+
+    // S'abonner aux changements d'état des entités pertinentes
+    if (this._config.entities) {
+      this._config.entities.forEach((entityId) => {
+        // Abonnement via la nouvelle API de Home Assistant
+        if (this._hass.connection && this._hass.connection.subscribeMessage) {
+          const unsub = this._hass.connection.subscribeMessage(
+            (message) => {
+              // Si l'état de l'entité a changé, rafraîchir les données
+              if (message.data && message.data.entity_id === entityId) {
+                console.log(`Entity state changed: ${entityId}`);
+                this._fetchData();
+                this._render();
+              }
+            },
+            { type: 'subscribe_entities', entity_ids: [entityId] }
+          );
+          this._entityListeners.set(entityId, unsub);
+        }
+      });
+    }
+  }
+
+  _setLoadingState(isLoading) {
+    // Ajouter/supprimer une classe de chargement sur la carte
+    const card = this.shadowRoot.querySelector('ha-card');
+    if (card) {
+      if (isLoading) {
+        card.classList.add('loading');
+      } else {
+        card.classList.remove('loading');
+      }
+    }
+  }
+
+  _refreshData() {
+    this._setLoadingState(true);
+    this._fetchData();
+    this._render();
+    setTimeout(() => {
+      this._setLoadingState(false);
+    }, 300);
+  }
 }
 
+// Enregistrement du composant personnalisé
 customElements.define('budget-tracker-card', BudgetTrackerCard);
 
-// Enregistrer la carte pour HACS Frontend
+// Indication à Home Assistant que la carte est disponible
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'budget-tracker-card',
-  name: 'Budget Tracker Card',
-  description: 'Carte pour gérer les comptes, revenus, dépenses et récurrences'
+  type: "budget-tracker-card",
+  name: "Budget Tracker Card",
+  description: "Carte personnalisée pour gérer le budget",
+  preview: false
 });

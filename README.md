@@ -106,6 +106,17 @@ data:
   item_id: "1234abcd-ef56-7890-ab12-345678cdef90" # ID de l'élément à supprimer
 ```
 
+#### `budget_tracker.clear_month_items`
+Supprime toutes les entrées du mois en cours sans archiver ni réinitialiser.
+```yaml
+service: budget_tracker.clear_month_items
+data:
+  account: default       # optionnel, "default" par défaut
+  clear_income: true     # optionnel, true par défaut, indique s'il faut supprimer les revenus
+  clear_expenses: true   # optionnel, true par défaut, indique s'il faut supprimer les dépenses
+  category: "Loisirs"    # optionnel, si spécifié, ne supprime que les entrées de cette catégorie
+```
+
 #### `budget_tracker.reset_month`
 Force une réinitialisation du mois et archive les données.
 ```yaml
@@ -174,8 +185,13 @@ Cette intégration inclut une carte Lovelace personnalisée pour gérer visuelle
 
 ### Installation de la carte
 
-1. Copiez les fichiers du dossier `www` dans le dossier `www` de votre installation Home Assistant.
-2. Redémarrez votre frontend Home Assistant (Configuration > Paramètres > Redémarrer le frontend).
+1. Copiez les fichiers du dossier `www` (`budget-tracker-card.js`, `budget-tracker-card-editor.js` et `index.js`) dans le dossier `www/community/budget-tracker-card/` (créer le dossier et chemin si inexistant) de votre installation Home Assistant.
+2. Ajoutez la ressource JavaScript à votre configuration Lovelace :
+   - Allez dans Configuration > Tableaux de bord > Ressources
+   - Cliquez sur "Ajouter ressource"
+   - URL: `/hacsfiles/budget-tracker-card/budget-tracker-card.js`
+   - Type de ressource: "JavaScript Module"
+3. Redémarrez complètement Home Assistant (pas seulement le frontend).
 
 ### Utilisation de la carte
 
