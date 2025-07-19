@@ -127,7 +127,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "balance": 0, 
             "income_items": [], 
             "expense_items": [], 
-            "recurring_income": [],
+            "recurring_incomes": [],
             "recurring_expenses": [],
             "history": {}
         } for account in accounts},
@@ -249,8 +249,8 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
         account_data["balance"] = 0
         account_data["income_items"] = []
         account_data["expense_items"] = []
-        if "recurring_income" in account_data:
-            for recurring_item in account_data["recurring_income"]:
+        if "s" in account_data:
+            for recurring_item in account_data["recurring_incomes"]:
                 new_item = {
                     "id": str(uuid.uuid4()),
                     "amount": recurring_item["amount"],
@@ -261,7 +261,7 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
                 }
                 account_data["income_items"].append(new_item)
         total_items = sum(i["amount"] for i in account_data["income_items"])
-        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_income", []))
+        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_incomes", []))
         account_data["income"] = total_items + total_recurrents
         if "recurring_expenses" in account_data:
             for recurring_item in account_data["recurring_expenses"]:
@@ -381,7 +381,7 @@ def register_services(hass: HomeAssistant):
                 entry_data["data"][account]["income_items"].append(item)
                 # Update total income (items + récurrents)
                 total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
                 entry_data["data"][account]["income"] = total_items + total_recurrents
                 # Update balance
                 entry_data["data"][account]["balance"] = (
@@ -460,7 +460,7 @@ def register_services(hass: HomeAssistant):
                         if item.get("id") == item_id:
                             entry_data["data"][account]["income_items"].pop(i)
                             total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
                             entry_data["data"][account]["income"] = total_items + total_recurrents
                             entry_data["data"][account]["balance"] = (
                                 entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
@@ -514,7 +514,7 @@ def register_services(hass: HomeAssistant):
                             account_data["income_items"] = []
                             modified = True
                     total_items = sum(i["amount"] for i in account_data.get("income_items", []))
-                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_income", []))
+                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_incomes", []))
                     account_data["income"] = total_items + total_recurrents
                 # Clear expense items if requested
                 if clear_expenses and "expense_items" in account_data:
@@ -563,9 +563,9 @@ def register_services(hass: HomeAssistant):
                     "day_of_month": day_of_month,
                     "created_at": datetime.now().isoformat(),
                 }
-                if "recurring_income" not in entry_data["data"][account]:
-                    entry_data["data"][account]["recurring_income"] = []
-                entry_data["data"][account]["recurring_income"].append(item)
+                if "recurring_incomes" not in entry_data["data"][account]:
+                    entry_data["data"][account]["recurring_incomes"] = []
+                entry_data["data"][account]["recurring_incomes"].append(item)
                 current_day = datetime.now().day
                 if current_day <= day_of_month:
                     new_item = {
@@ -580,7 +580,7 @@ def register_services(hass: HomeAssistant):
                         entry_data["data"][account]["income_items"] = []
                     entry_data["data"][account]["income_items"].append(new_item)
                 total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
                 entry_data["data"][account]["income"] = total_items + total_recurrents
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
@@ -653,10 +653,10 @@ def register_services(hass: HomeAssistant):
             if account in entry_data["accounts"]:
                 updated = False
                 # Check in recurring income items
-                if "recurring_income" in entry_data["data"][account]:
-                    for i, item in enumerate(entry_data["data"][account]["recurring_income"]):
+                if "recurring_incomes" in entry_data["data"][account]:
+                    for i, item in enumerate(entry_data["data"][account]["recurring_incomes"]):
                         if item.get("id") == item_id:
-                            entry_data["data"][account]["recurring_income"].pop(i)
+                            entry_data["data"][account]["recurring_incomes"].pop(i)
                             updated = True
                             break
                 # Check in recurring expense items
@@ -669,7 +669,7 @@ def register_services(hass: HomeAssistant):
                 if updated:
                     # Recalcule les totaux après suppression
                     total_income_items = sum(i["amount"] for i in entry_data["data"][account].get("income_items", []))
-                    total_income_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                    total_income_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
                     entry_data["data"][account]["income"] = total_income_items + total_income_recurrents
                     total_expense_items = sum(i["amount"] for i in entry_data["data"][account].get("expense_items", []))
                     total_expense_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))

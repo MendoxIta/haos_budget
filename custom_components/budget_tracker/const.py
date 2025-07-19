@@ -3,7 +3,7 @@ from datetime import timedelta
 
 DOMAIN = "budget_tracker"
 NAME = "Budget Tracker"
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 
 # Configuration
 CONF_ACCOUNTS = "accounts"

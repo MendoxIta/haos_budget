@@ -44,7 +44,7 @@ class BudgetTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "balance": 0, 
                 "income_items": [], 
                 "expense_items": [], 
-                "recurring_income": [],
+                "recurring_incomes": [],
                 "recurring_expenses": [],
                 "history": {}
             }
