@@ -36,8 +36,7 @@
   "selector": {
     "storage_type": {
       "options": {
-        "file": "Stockage Fichier",
-        "input_text": "Entités Input Text"
+        "file": "Stockage Fichier"
       }
     }
   },

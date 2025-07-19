@@ -49,31 +49,13 @@ La configuration se fait via l'interface utilisateur de Home Assistant:
 3. Suivez les étapes pour configurer:
    - Nom de l'intégration (optionnel)
    - Comptes (séparés par des virgules)
-   - Type de stockage (fichier ou entités input_text)
+   - Type de stockage (fichier)
 
 ## Utilisation
 
 ### Services
 
 Le composant fournit plusieurs services:
-
-#### `budget_tracker.set_income`
-Définit le montant total des revenus pour un compte (méthode simple).
-```yaml
-service: budget_tracker.set_income
-data:
-  account: default  # optionnel, "default" par défaut
-  amount: 2500      # montant des revenus
-```
-
-#### `budget_tracker.set_expenses`
-Définit le montant total des dépenses pour un compte (méthode simple).
-```yaml
-service: budget_tracker.set_expenses
-data:
-  account: default  # optionnel, "default" par défaut
-  amount: 1800      # montant des dépenses
-```
 
 #### `budget_tracker.add_income_item`
 Ajoute un élément détaillé de revenu (nouvelle fonctionnalité).
@@ -347,6 +329,16 @@ script:
 - Home Assistant Core 2023.11.0 ou supérieur
 - Fonctionne sur tous les types d'installations (Core, HASSOS, Docker)
 - Compatible avec les installations à ressources limitées (utilise peu de CPU/mémoire)
+
+## Notes de version
+
+### v0.5.1
+- Suppression de l'option de stockage via entités input_text
+- Simplification du code de gestion des données
+- Utilisation exclusive du stockage par fichier
+
+### v0.5.0
+- Version initiale publique
 
 ## Contributions
 

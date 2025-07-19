@@ -1,6 +1,8 @@
 """Config flow for Budget Tracker integration."""
 from typing import Any, Dict, Optional
 import voluptuous as vol
+import json
+import os
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
@@ -14,15 +16,42 @@ from .const import (
     CONF_ACCOUNTS,
     CONF_STORAGE_TYPE,
     STORAGE_TYPE_FILE,
-    STORAGE_TYPE_INPUT_TEXT,
     DEFAULT_STORAGE_TYPE,
+    DATA_STORAGE_FILE,
 )
-
 
 class BudgetTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Budget Tracker."""
 
     VERSION = 1
+
+    def add_device_node_to_storage(self, account_name):
+        """
+        Create a node for the account in DATA_STORAGE_FILE if absent.
+        """
+        if not os.path.exists(DATA_STORAGE_FILE):
+            data = {}
+        else:
+            try:
+                with open(DATA_STORAGE_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        if account_name not in data:
+            data[account_name] = {
+                "income": 0, 
+                "expenses": 0, 
+                "balance": 0, 
+                "income_items": [], 
+                "expense_items": [], 
+                "recurring_income": [],
+                "recurring_expenses": [],
+                "history": {}
+            }
+            with open(DATA_STORAGE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        return False
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle the initial step."""
@@ -34,25 +63,25 @@ class BudgetTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not accounts:
                 errors[CONF_ACCOUNTS] = "no_accounts"
             else:
+                for account in accounts:
+                    self.add_device_node_to_storage(account)
                 # Store the validated data
                 return self.async_create_entry(
-                    title=user_input.get(CONF_NAME, NAME),
+                    title=", ".join(accounts),
                     data={
-                        CONF_NAME: user_input.get(CONF_NAME, NAME),
                         CONF_ACCOUNTS: accounts,
                         CONF_STORAGE_TYPE: user_input.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE),
                     },
                 )
 
-        # Show form
+        # Show form (no name field)
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_NAME, default=NAME): str,
                     vol.Required(CONF_ACCOUNTS, default="default"): str,
                     vol.Optional(CONF_STORAGE_TYPE, default=DEFAULT_STORAGE_TYPE): vol.In(
-                        [STORAGE_TYPE_FILE, STORAGE_TYPE_INPUT_TEXT]
+                        [STORAGE_TYPE_FILE]
                     ),
                 }
             ),
@@ -83,9 +112,8 @@ class BudgetTrackerOptionsFlowHandler(config_entries.OptionsFlow):
             if not accounts:
                 errors[CONF_ACCOUNTS] = "no_accounts"
             else:
-                # Update the configuration
                 return self.async_create_entry(
-                    title="",
+                    title=", ".join(accounts),
                     data={
                         CONF_ACCOUNTS: accounts,
                         CONF_STORAGE_TYPE: user_input.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE),
@@ -99,14 +127,14 @@ class BudgetTrackerOptionsFlowHandler(config_entries.OptionsFlow):
         
         current_storage_type = self.config_entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE)
 
-        # Show form
+        # Show form (no name field)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_ACCOUNTS, default=current_accounts): str,
                     vol.Required(CONF_STORAGE_TYPE, default=current_storage_type): vol.In(
-                        [STORAGE_TYPE_FILE, STORAGE_TYPE_INPUT_TEXT]
+                        [STORAGE_TYPE_FILE]
                     ),
                 }
             ),

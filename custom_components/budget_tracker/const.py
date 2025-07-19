@@ -3,14 +3,13 @@ from datetime import timedelta
 
 DOMAIN = "budget_tracker"
 NAME = "Budget Tracker"
-VERSION = "0.4.0"
+VERSION = "0.5.1"
 
 # Configuration
 CONF_ACCOUNTS = "accounts"
 CONF_STORAGE_TYPE = "storage_type"
 
 STORAGE_TYPE_FILE = "file"
-STORAGE_TYPE_INPUT_TEXT = "input_text"
 
 DEFAULT_STORAGE_TYPE = STORAGE_TYPE_FILE
 
@@ -36,9 +35,11 @@ ATTR_MONTH = "month"
 ATTR_YEAR = "year"
 ATTR_DESCRIPTION = "description"
 ATTR_ITEM_ID = "item_id"
-ATTR_ITEMS = "items"
+ATTR_ITEMS_INCOME = "income_items"
+ATTR_ITEMS_EXPENSE = "expense_items"
 ATTR_CATEGORY = "category"
-ATTR_RECURRING = "recurring_items"
+ATTR_RECURRING_INCOMES = "recurring_incomes"
+ATTR_RECURRING_EXPENSES = "recurring_expenses"
 ATTR_DAY_OF_MONTH = "day_of_month"
 
 # Sensor names

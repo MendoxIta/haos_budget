@@ -1,0 +1,117 @@
+add_income_item:
+  name: Ajouter un revenu
+  description: Ajoute un revenu au compte spécifié.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    amount:
+      description: Montant du revenu
+      example: 100
+    description:
+      description: Description du revenu
+      example: Salaire
+    category:
+      description: Catégorie du revenu
+      example: Travail
+
+add_expense_item:
+  name: Ajouter une dépense
+  description: Ajoute une dépense au compte spécifié.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    amount:
+      description: Montant de la dépense
+      example: 50
+    description:
+      description: Description de la dépense
+      example: Courses
+    category:
+      description: Catégorie de la dépense
+      example: Alimentation
+
+remove_item:
+  name: Supprimer un élément
+  description: Supprime un revenu ou une dépense par son identifiant.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    item_id:
+      description: Identifiant de l'élément à supprimer
+      example: 123e4567-e89b-12d3-a456-426614174000
+
+add_recurring_income:
+  name: Ajouter un revenu récurrent
+  description: Ajoute un revenu récurrent au compte spécifié.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    amount:
+      description: Montant du revenu
+      example: 200
+    description:
+      description: Description du revenu
+      example: Allocation
+    category:
+      description: Catégorie du revenu
+      example: Aide
+    day_of_month:
+      description: Jour du mois
+      example: 1
+
+add_recurring_expense:
+  name: Ajouter une dépense récurrente
+  description: Ajoute une dépense récurrente au compte spécifié.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    amount:
+      description: Montant de la dépense
+      example: 80
+    description:
+      description: Description de la dépense
+      example: Abonnement
+    category:
+      description: Catégorie de la dépense
+      example: Internet
+    day_of_month:
+      description: Jour du mois
+      example: 10
+
+remove_recurring_item:
+  name: Supprimer un élément récurrent
+  description: Supprime un revenu ou une dépense récurrente par son identifiant.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    item_id:
+      description: Identifiant de l'élément à supprimer
+      example: 123e4567-e89b-12d3-a456-426614174000
+
+clear_month_items:
+  name: Supprimer tous les éléments du mois
+  description: Supprime tous les revenus ou dépenses du mois pour un compte.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun
+    clear_income:
+      description: Supprimer tous les revenus
+      example: true
+    clear_expenses:
+      description: Supprimer toutes les dépenses
+      example: false
+
+reset_month:
+  name: Réinitialiser le mois
+  description: Archive les données du mois courant et réinitialise pour le nouveau mois.
+  fields:
+    account:
+      description: Nom du compte
+      example: commun

@@ -28,8 +28,10 @@ from .const import (
     ATTR_BALANCE,
     ATTR_MONTH,
     ATTR_YEAR,
-    ATTR_ITEMS,
-    ATTR_RECURRING,
+    ATTR_ITEMS_INCOME,
+    ATTR_ITEMS_EXPENSE,
+    ATTR_RECURRING_INCOMES,
+    ATTR_RECURRING_EXPENSES
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -114,7 +116,8 @@ class BudgetSensorBase(SensorEntity):
     @property
     def account_data(self):
         """Get account data from integration data."""
-        return self.hass.data[DOMAIN][self.entry_id]["data"].get(self.account, {})
+        data = self.hass.data[DOMAIN][self.entry_id]["data"].get(self.account, {})
+        return data
 
 
 class IncomeSensor(BudgetSensorBase):
@@ -139,10 +142,11 @@ class IncomeSensor(BudgetSensorBase):
     @property
     def extra_state_attributes(self):
         """Return entity specific state attributes."""
-        return {
-            ATTR_ITEMS: self.account_data.get("income_items", []),
-            ATTR_RECURRING: self.account_data.get("recurring_income", [])
+        attrs = {
+            ATTR_ITEMS_INCOME: self.account_data.get("income_items", []),
+            ATTR_RECURRING_INCOMES: self.account_data.get("recurring_incomes", [])
         }
+        return attrs
 
 
 class ExpensesSensor(BudgetSensorBase):
@@ -167,10 +171,11 @@ class ExpensesSensor(BudgetSensorBase):
     @property
     def extra_state_attributes(self):
         """Return entity specific state attributes."""
-        return {
-            ATTR_ITEMS: self.account_data.get("expense_items", []),
-            ATTR_RECURRING: self.account_data.get("recurring_expenses", [])
+        attrs = {
+            ATTR_ITEMS_EXPENSE: self.account_data.get("expense_items", []),
+            ATTR_RECURRING_EXPENSES: self.account_data.get("recurring_expenses", [])
         }
+        return attrs
 
 
 class BalanceSensor(BudgetSensorBase):
@@ -261,7 +266,7 @@ class HistoricalIncomeSensor(HistoricalSensorBase):
         
         # Add income items to attributes if they exist
         if "income_items" in month_data:
-            self._attr_extra_state_attributes[ATTR_ITEMS] = month_data["income_items"]
+            self._attr_extra_state_attributes[ATTR_ITEMS_INCOME] = month_data["income_items"]
 
 
 class HistoricalExpensesSensor(HistoricalSensorBase):
@@ -285,7 +290,7 @@ class HistoricalExpensesSensor(HistoricalSensorBase):
         
         # Add expense items to attributes if they exist
         if "expense_items" in month_data:
-            self._attr_extra_state_attributes[ATTR_ITEMS] = month_data["expense_items"]
+            self._attr_extra_state_attributes[ATTR_ITEMS_EXPENSE] = month_data["expense_items"]
 
 
 class HistoricalBalanceSensor(HistoricalSensorBase):

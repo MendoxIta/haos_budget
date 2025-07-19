@@ -1,4 +1,9 @@
-"""The Budget Tracker integration."""
+"""
+Intégration Budget Tracker pour Home Assistant
+Ce module permet de suivre les revenus et dépenses mensuels, avec gestion des comptes, récurrents et historique.
+"""
+
+# Imports
 import asyncio
 import logging
 import os
@@ -26,7 +31,6 @@ from .const import (
     CONF_ACCOUNTS,
     CONF_STORAGE_TYPE,
     STORAGE_TYPE_FILE,
-    STORAGE_TYPE_INPUT_TEXT,
     DEFAULT_STORAGE_TYPE,
     SERVICE_SET_INCOME,
     SERVICE_SET_EXPENSES,
@@ -44,9 +48,11 @@ from .const import (
     ATTR_YEAR,
     ATTR_DESCRIPTION,
     ATTR_ITEM_ID,
-    ATTR_ITEMS,
+    ATTR_ITEMS_INCOME,
+    ATTR_ITEMS_EXPENSE,
     ATTR_CATEGORY,
-    ATTR_RECURRING,
+    ATTR_RECURRING_INCOMES,
+    ATTR_RECURRING_EXPENSES,
     ATTR_DAY_OF_MONTH,
     DATA_STORAGE_FILE,
     EVENT_MONTH_CHANGED,
@@ -54,13 +60,47 @@ from .const import (
 from .frontend_integration import setup_frontend_integration, notify_frontend
 
 _LOGGER = logging.getLogger(__name__)
-
 PLATFORMS = [Platform.SENSOR]
-
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
+def get_storage_path(hass: HomeAssistant) -> str:
+    """
+    Retourne le chemin du fichier de stockage des données.
+    """
+    return hass.config.path(DATA_STORAGE_FILE)
+
+def _read_json_file(file_path):
+    with open(file_path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+def _write_json_file(file_path, data):
+    with open(file_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+
+
+
+async def remove_device_node_from_storage(account_name):
+    """
+    Remove the node for the account in DATA_STORAGE_FILE if present.
+    """
+    if not os.path.exists(DATA_STORAGE_FILE):
+        return False
+    try:
+        data = await hass.async_add_executor_job(_read_json_file, DATA_STORAGE_FILE)
+        if account_name in data:
+            del data[account_name]
+            await hass.async_add_executor_job(_write_json_file, DATA_STORAGE_FILE, data)
+            return True
+        return False
+    except Exception:
+        return False
+
+# ---------------------- SETUP PRINCIPAL ----------------------
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Budget Tracker component."""
+    """
+    Configure le composant Budget Tracker lors du démarrage de Home Assistant.
+    Initialise l'intégration frontend.
+    """
     hass.data.setdefault(DOMAIN, {})
     
     # Setup frontend integration (websocket API)
@@ -69,7 +109,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Budget Tracker from a config entry."""
+    """
+    Configure l'intégration Budget Tracker à partir d'une entrée de configuration.
+    Initialise la structure des données, charge les données existantes, enregistre les services et planifie l'archivage mensuel.
+    """
     # Load or create data storage
     storage_type = entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE)
     accounts = entry.data.get(CONF_ACCOUNTS, ["default"])
@@ -130,18 +173,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+    """
+    Décharge une entrée de configuration et nettoie les données associées.
+    """
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     # Remove data
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Remove storage file if using file storage
+        if entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE) == STORAGE_TYPE_FILE:
+            await remove_device_node_from_storage(entry.data.get(CONF_ACCOUNTS, ["default"])[0])
 
     return unload_ok
 
+# ---------------------- GESTION DES DONNÉES ----------------------
 async def load_data(hass: HomeAssistant, entry: ConfigEntry):
-    """Load data from file or input_text."""
+    """
+    Charge les données du budget depuis le fichier.
+    """
     storage_type = entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE)
     
     if storage_type == STORAGE_TYPE_FILE:
@@ -149,73 +200,43 @@ async def load_data(hass: HomeAssistant, entry: ConfigEntry):
         file_path = get_storage_path(hass)
         if os.path.exists(file_path):
             try:
-                with open(file_path, "r") as file:
-                    data = json.load(file)
-                    # Update data in memory
-                    hass.data[DOMAIN][entry.entry_id]["data"] = data
-                    _LOGGER.info("Loaded budget data from file: %s", file_path)
+                data = await hass.async_add_executor_job(_read_json_file, file_path)
+                # Update data in memory
+                hass.data[DOMAIN][entry.entry_id]["data"] = data
+                _LOGGER.info("Loaded budget data from file: %s", file_path)
             except Exception as err:
                 _LOGGER.error("Failed to load budget data: %s", err)
-    
-    elif storage_type == STORAGE_TYPE_INPUT_TEXT:
-        # Load data from input_text entities
-        # This implementation would depend on how input_text entities are set up
-        # For each account, we would look for input_text.budget_tracker_{account}_data
-        for account in entry.data.get(CONF_ACCOUNTS, ["default"]):
-            entity_id = f"input_text.budget_tracker_{account}_data"
-            state = hass.states.get(entity_id)
-            if state:
-                try:
-                    data = json.loads(state.state)
-                    hass.data[DOMAIN][entry.entry_id]["data"][account] = data
-                    _LOGGER.info("Loaded budget data for account %s from input_text", account)
-                except Exception as err:
-                    _LOGGER.error("Failed to load budget data for account %s: %s", account, err)
 
 async def save_data(hass: HomeAssistant, entry: ConfigEntry):
-    """Save data to file or input_text."""
+    """
+    Sauvegarde les données du budget dans le fichier.
+    """
     data = hass.data[DOMAIN][entry.entry_id]["data"]
     storage_type = entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE)
     
     if storage_type == STORAGE_TYPE_FILE:
-        # Save data to file
+        # Save data to file asynchronously
         file_path = get_storage_path(hass)
         try:
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "w") as file:
-                json.dump(data, file, cls=JSONEncoder)
+            await hass.async_add_executor_job(_write_json_file, file_path, data)
             _LOGGER.info("Saved budget data to file: %s", file_path)
         except Exception as err:
             _LOGGER.error("Failed to save budget data: %s", err)
-    
-    elif storage_type == STORAGE_TYPE_INPUT_TEXT:
-        # Save data to input_text entities
-        for account in entry.data.get(CONF_ACCOUNTS, ["default"]):
-            entity_id = f"input_text.budget_tracker_{account}_data"
-            account_data = data.get(account, {})
-            try:
-                await hass.services.async_call(
-                    "input_text", 
-                    "set_value", 
-                    {"entity_id": entity_id, "value": json.dumps(account_data, cls=JSONEncoder)},
-                )
-                _LOGGER.info("Saved budget data for account %s to input_text", account)
-            except Exception as err:
-                _LOGGER.error("Failed to save budget data for account %s: %s", account, err)
 
 async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
-    """Archive current month data and reset for new month."""
+    """
+    Archive les données du mois courant et réinitialise pour le nouveau mois.
+    Applique les revenus et dépenses récurrents.
+    Les totaux incluent les récurrents.
+    """
     now = datetime.now()
     last_month = now.replace(day=1) - timedelta(days=1)
     year_month_key = f"{last_month.year}_{last_month.month:02d}"
-    
     for account in entry.data.get(CONF_ACCOUNTS, ["default"]):
         account_data = hass.data[DOMAIN][entry.entry_id]["data"].get(account, {})
-        
-        # Save current values to history
         if "history" not in account_data:
             account_data["history"] = {}
-        
         account_data["history"][year_month_key] = {
             "income": account_data.get("income", 0),
             "expenses": account_data.get("expenses", 0),
@@ -223,144 +244,104 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
             "income_items": account_data.get("income_items", []),
             "expense_items": account_data.get("expense_items", []),
         }
-        
-        # Reset current values
         account_data["income"] = 0
         account_data["expenses"] = 0
         account_data["balance"] = 0
         account_data["income_items"] = []
         account_data["expense_items"] = []
-        
-        # Apply recurring items for the new month
         if "recurring_income" in account_data:
             for recurring_item in account_data["recurring_income"]:
-                # Create a new income item from the recurring template
                 new_item = {
                     "id": str(uuid.uuid4()),
                     "amount": recurring_item["amount"],
                     "description": recurring_item["description"],
                     "category": recurring_item["category"],
                     "timestamp": datetime.now().isoformat(),
-                    "recurring_id": recurring_item["id"],  # Reference to the recurring item
+                    "recurring_id": recurring_item["id"],
                 }
-                
                 account_data["income_items"].append(new_item)
-                account_data["income"] += new_item["amount"]
-                
+        total_items = sum(i["amount"] for i in account_data["income_items"])
+        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_income", []))
+        account_data["income"] = total_items + total_recurrents
         if "recurring_expenses" in account_data:
             for recurring_item in account_data["recurring_expenses"]:
-                # Create a new expense item from the recurring template
                 new_item = {
                     "id": str(uuid.uuid4()),
                     "amount": recurring_item["amount"],
                     "description": recurring_item["description"],
                     "category": recurring_item["category"],
                     "timestamp": datetime.now().isoformat(),
-                    "recurring_id": recurring_item["id"],  # Reference to the recurring item
+                    "recurring_id": recurring_item["id"],
                 }
-                
                 account_data["expense_items"].append(new_item)
-                account_data["expenses"] += new_item["amount"]
-        
-        # Update balance after applying recurring items
+        total_items = sum(i["amount"] for i in account_data["expense_items"])
+        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_expenses", []))
+        account_data["expenses"] = total_items + total_recurrents
         account_data["balance"] = account_data["income"] - account_data["expenses"]
-        
-        # Update in memory
         hass.data[DOMAIN][entry.entry_id]["data"][account] = account_data
-    
-    # Update last reset date
     new_data = dict(entry.data)
     new_data["last_reset"] = now.isoformat()
     hass.config_entries.async_update_entry(entry, data=new_data)
-    
-    # Save changes
     await save_data(hass, entry)
-    
-    # Fire event
     hass.bus.async_fire(
         EVENT_MONTH_CHANGED, 
         {"month": last_month.month, "year": last_month.year}
     )
-    
-    # Force state update
     async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry.entry_id}")
 
-def get_storage_path(hass: HomeAssistant) -> str:
-    """Get the path for storing data file."""
-    return hass.config.path(DATA_STORAGE_FILE)
-
+# ---------------------- SERVICES ----------------------
 def register_services(hass: HomeAssistant):
-    """Register integration services."""
+    """
+    Enregistre tous les services de l'intégration Budget Tracker.
+    """
     async def handle_set_income(call):
-        """Handle the set_income service."""
+        """
+        Service déprécié : Ajoute un revenu via un item, ne modifie plus le total directement.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         
+        _LOGGER.warning("The set_income service is deprecated. Use add_income_item service instead.")
+        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
-                # For backward compatibility, set the total income
-                entry_data["data"][account]["income"] = amount
-                
-                # Clear existing income items and create a single item with the total
-                entry_data["data"][account]["income_items"] = [{
-                    "id": str(uuid.uuid4()),
-                    "amount": amount,
-                    "description": "Total Income",
-                    "category": "",
-                    "timestamp": datetime.now().isoformat(),
-                }] if amount > 0 else []
-                
-                # Update balance
-                entry_data["data"][account]["balance"] = (
-                    amount - entry_data["data"][account].get("expenses", 0)
-                )
-                
-                # Save the updated data
-                entry = hass.config_entries.async_get_entry(entry_id)
-                await save_data(hass, entry)
-                
-                # Notify sensors to update
-                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                # Instead of setting the total directly, add an income item
+                await handle_add_income_item(vol.Schema({
+                    ATTR_ACCOUNT: account,
+                    ATTR_AMOUNT: amount,
+                    ATTR_DESCRIPTION: "Income Entry (via deprecated service)",
+                    ATTR_CATEGORY: "Legacy"
+                }))
                 return
         
         _LOGGER.warning("Account %s not found", account)
     
     async def handle_set_expenses(call):
-        """Handle the set_expenses service."""
+        """
+        Service déprécié : Ajoute une dépense via un item, ne modifie plus le total directement.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         
+        _LOGGER.warning("The set_expenses service is deprecated. Use add_expense_item service instead.")
+        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
-                # For backward compatibility, set the total expenses
-                entry_data["data"][account]["expenses"] = amount
-                
-                # Clear existing expense items and create a single item with the total
-                entry_data["data"][account]["expense_items"] = [{
-                    "id": str(uuid.uuid4()),
-                    "amount": amount,
-                    "description": "Total Expenses",
-                    "category": "",
-                    "timestamp": datetime.now().isoformat(),
-                }] if amount > 0 else []
-                
-                # Update balance
-                entry_data["data"][account]["balance"] = (
-                    entry_data["data"][account].get("income", 0) - amount
-                )
-                
-                # Save the updated data
-                entry = hass.config_entries.async_get_entry(entry_id)
-                await save_data(hass, entry)
-                
-                # Notify sensors to update
-                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                # Instead of setting the total directly, add an expense item
+                await handle_add_expense_item(vol.Schema({
+                    ATTR_ACCOUNT: account,
+                    ATTR_AMOUNT: amount,
+                    ATTR_DESCRIPTION: "Expense Entry (via deprecated service)",
+                    ATTR_CATEGORY: "Legacy"
+                }))
                 return
         
         _LOGGER.warning("Account %s not found", account)
     
     async def handle_reset_month(call):
-        """Handle the reset_month service."""
+        """
+        Service pour archiver et réinitialiser le mois.
+        """
         account = call.data.get(ATTR_ACCOUNT)
         year = call.data.get(ATTR_YEAR)
         month = call.data.get(ATTR_MONTH)
@@ -374,7 +355,10 @@ def register_services(hass: HomeAssistant):
     
     # Register services
     async def handle_add_income_item(call):
-        """Handle the add_income_item service."""
+        """
+        Ajoute un item de revenu au compte spécifié et met à jour le total et le solde.
+        Les revenus incluent les items du mois + les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
@@ -391,35 +375,35 @@ def register_services(hass: HomeAssistant):
                     "category": category,
                     "timestamp": datetime.now().isoformat(),
                 }
-                
                 # Add to income items
                 if "income_items" not in entry_data["data"][account]:
                     entry_data["data"][account]["income_items"] = []
-                
                 entry_data["data"][account]["income_items"].append(item)
-                
-                # Update total income
-                entry_data["data"][account]["income"] = sum(
-                    item["amount"] for item in entry_data["data"][account]["income_items"]
-                )
-                
+                # Update total income (items + récurrents)
+                total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                entry_data["data"][account]["income"] = total_items + total_recurrents
                 # Update balance
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
                 )
-                
                 # Save the updated data
+                # Log the data in memory ve reload
                 entry = hass.config_entries.async_get_entry(entry_id)
                 await save_data(hass, entry)
-                
+                # Recharge les données depuis le fichier pour garantir la cohérence en mémoire
+                await load_data(hass, entry)
+
                 # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
-        
         _LOGGER.warning("Account %s not found", account)
 
     async def handle_add_expense_item(call):
-        """Handle the add_expense_item service."""
+        """
+        Ajoute un item de dépense au compte spécifié et met à jour le total et le solde.
+        Les dépenses incluent les items du mois + les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
@@ -436,106 +420,88 @@ def register_services(hass: HomeAssistant):
                     "category": category,
                     "timestamp": datetime.now().isoformat(),
                 }
-                
                 # Add to expense items
                 if "expense_items" not in entry_data["data"][account]:
                     entry_data["data"][account]["expense_items"] = []
-                
                 entry_data["data"][account]["expense_items"].append(item)
-                
-                # Update total expenses
-                entry_data["data"][account]["expenses"] = sum(
-                    item["amount"] for item in entry_data["data"][account]["expense_items"]
-                )
-                
+                # Update total expenses (items + récurrents)
+                total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
+                entry_data["data"][account]["expenses"] = total_items + total_recurrents
                 # Update balance
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
                 )
-                
                 # Save the updated data
                 entry = hass.config_entries.async_get_entry(entry_id)
                 await save_data(hass, entry)
-                
+                # Recharge les données depuis le fichier pour garantir la cohérence en mémoire
+                await load_data(hass, entry)
                 # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
-        
         _LOGGER.warning("Account %s not found", account)
 
     async def handle_remove_item(call):
-        """Handle the remove_item service."""
+        """
+        Supprime un item de revenu ou de dépense et met à jour les totaux et le solde.
+        Les totaux incluent les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         item_id = call.data.get(ATTR_ITEM_ID)
-        
         if not item_id:
             _LOGGER.warning("No item ID provided")
             return
-            
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 # Check in income items
                 if "income_items" in entry_data["data"][account]:
                     for i, item in enumerate(entry_data["data"][account]["income_items"]):
                         if item.get("id") == item_id:
-                            # Remove item
                             entry_data["data"][account]["income_items"].pop(i)
-                            
-                            # Update totals
-                            entry_data["data"][account]["income"] = sum(
-                                item["amount"] for item in entry_data["data"][account]["income_items"]
-                            )
-                            
+                            total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
+                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                            entry_data["data"][account]["income"] = total_items + total_recurrents
                             entry_data["data"][account]["balance"] = (
                                 entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
                             )
-                            
-                            # Save and update
                             entry = hass.config_entries.async_get_entry(entry_id)
                             await save_data(hass, entry)
                             async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                             return
-
                 # Check in expense items
                 if "expense_items" in entry_data["data"][account]:
                     for i, item in enumerate(entry_data["data"][account]["expense_items"]):
                         if item.get("id") == item_id:
-                            # Remove item
                             entry_data["data"][account]["expense_items"].pop(i)
-                            
-                            # Update totals
-                            entry_data["data"][account]["expenses"] = sum(
-                                item["amount"] for item in entry_data["data"][account]["expense_items"]
-                            )
-                            
+                            total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
+                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
+                            entry_data["data"][account]["expenses"] = total_items + total_recurrents
                             entry_data["data"][account]["balance"] = (
                                 entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
                             )
-                            
-                            # Save and update
                             entry = hass.config_entries.async_get_entry(entry_id)
                             await save_data(hass, entry)
                             async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                             return
-        
         _LOGGER.warning("Item %s not found for account %s", item_id, account)
 
     async def handle_clear_month_items(call):
-        """Handle the clear_month_items service - Remove all entries without resetting the month."""
+        """
+        Supprime tous les items du mois (revenus/dépenses) selon les filtres et met à jour les totaux.
+        Les totaux incluent les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         clear_income = call.data.get("clear_income", True)
         clear_expenses = call.data.get("clear_expenses", True)
         category_filter = call.data.get(ATTR_CATEGORY)
-        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 account_data = entry_data["data"][account]
                 modified = False
-                
                 # Clear income items if requested
                 if clear_income and "income_items" in account_data:
                     if category_filter:
-                        # Filter by category
                         before_count = len(account_data["income_items"])
                         account_data["income_items"] = [
                             item for item in account_data["income_items"]
@@ -544,20 +510,15 @@ def register_services(hass: HomeAssistant):
                         if before_count != len(account_data["income_items"]):
                             modified = True
                     else:
-                        # Clear all
                         if account_data["income_items"]:
                             account_data["income_items"] = []
                             modified = True
-                            
-                    # Recalculate total income
-                    account_data["income"] = sum(
-                        item["amount"] for item in account_data.get("income_items", [])
-                    )
-                
+                    total_items = sum(i["amount"] for i in account_data.get("income_items", []))
+                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_income", []))
+                    account_data["income"] = total_items + total_recurrents
                 # Clear expense items if requested
                 if clear_expenses and "expense_items" in account_data:
                     if category_filter:
-                        # Filter by category
                         before_count = len(account_data["expense_items"])
                         account_data["expense_items"] = [
                             item for item in account_data["expense_items"]
@@ -566,77 +527,34 @@ def register_services(hass: HomeAssistant):
                         if before_count != len(account_data["expense_items"]):
                             modified = True
                     else:
-                        # Clear all
                         if account_data["expense_items"]:
                             account_data["expense_items"] = []
                             modified = True
-                            
-                    # Recalculate total expenses
-                    account_data["expenses"] = sum(
-                        item["amount"] for item in account_data.get("expense_items", [])
-                    )
-                
-                # Update balance
+                    total_items = sum(i["amount"] for i in account_data.get("expense_items", []))
+                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_expenses", []))
+                    account_data["expenses"] = total_items + total_recurrents
                 account_data["balance"] = account_data.get("income", 0) - account_data.get("expenses", 0)
-                
                 if modified:
-                    # Save the updated data
                     entry = hass.config_entries.async_get_entry(entry_id)
                     await save_data(hass, entry)
-                    
-                    # Notify sensors to update
                     async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                     _LOGGER.info("Cleared items for account %s", account)
                 return
-        
         _LOGGER.warning("Account %s not found", account)
 
-    # Register services
-    hass.services.async_register(
-        DOMAIN, 
-        SERVICE_SET_INCOME, 
-        handle_set_income, 
-        vol.Schema({
-            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
-            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
-        })
-    )
-    
-    hass.services.async_register(
-        DOMAIN, 
-        SERVICE_SET_EXPENSES, 
-        handle_set_expenses, 
-        vol.Schema({
-            vol.Optional(ATTR_ACCOUNT, default="default"): cv.string,
-            vol.Required(ATTR_AMOUNT): vol.Coerce(float),
-        })
-    )
-    
-    hass.services.async_register(
-        DOMAIN, 
-        SERVICE_RESET_MONTH, 
-        handle_reset_month, 
-        vol.Schema({
-            vol.Optional(ATTR_ACCOUNT): cv.string,
-            vol.Optional(ATTR_YEAR): vol.Coerce(int),
-            vol.Optional(ATTR_MONTH): vol.All(
-                vol.Coerce(int), vol.Range(min=1, max=12)
-            ),
-        })
-    )
-    
     async def handle_add_recurring_income(call):
-        """Handle the add_recurring_income service."""
+        """
+        Ajoute un revenu récurrent et crée l'item du mois si nécessaire.
+        Les totaux incluent les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
         category = call.data.get(ATTR_CATEGORY, "")
         day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
         item_id = str(uuid.uuid4())
-        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
-                # Create new recurring item
                 item = {
                     "id": item_id,
                     "amount": amount,
@@ -645,14 +563,9 @@ def register_services(hass: HomeAssistant):
                     "day_of_month": day_of_month,
                     "created_at": datetime.now().isoformat(),
                 }
-                
-                # Add to recurring income items
                 if "recurring_income" not in entry_data["data"][account]:
                     entry_data["data"][account]["recurring_income"] = []
-                
                 entry_data["data"][account]["recurring_income"].append(item)
-                
-                # Create an actual income item for the current month if we're before or on the specified day
                 current_day = datetime.now().day
                 if current_day <= day_of_month:
                     new_item = {
@@ -663,45 +576,34 @@ def register_services(hass: HomeAssistant):
                         "timestamp": datetime.now().isoformat(),
                         "recurring_id": item_id,
                     }
-                    
-                    # Add to income items
                     if "income_items" not in entry_data["data"][account]:
                         entry_data["data"][account]["income_items"] = []
-                    
                     entry_data["data"][account]["income_items"].append(new_item)
-                    
-                    # Update total income
-                    entry_data["data"][account]["income"] = sum(
-                        item["amount"] for item in entry_data["data"][account]["income_items"]
-                    )
-                    
-                    # Update balance
-                    entry_data["data"][account]["balance"] = (
-                        entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
-                    )
-                
-                # Save the updated data
+                total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                entry_data["data"][account]["income"] = total_items + total_recurrents
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
+                )
                 entry = hass.config_entries.async_get_entry(entry_id)
                 await save_data(hass, entry)
-                
-                # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
-        
         _LOGGER.warning("Account %s not found", account)
 
     async def handle_add_recurring_expense(call):
-        """Handle the add_recurring_expense service."""
+        """
+        Ajoute une dépense récurrente et crée l'item du mois si nécessaire.
+        Les totaux incluent les récurrents.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
         category = call.data.get(ATTR_CATEGORY, "")
         day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
         item_id = str(uuid.uuid4())
-        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
-                # Create new recurring item
                 item = {
                     "id": item_id,
                     "amount": amount,
@@ -710,14 +612,9 @@ def register_services(hass: HomeAssistant):
                     "day_of_month": day_of_month,
                     "created_at": datetime.now().isoformat(),
                 }
-                
-                # Add to recurring expense items
                 if "recurring_expenses" not in entry_data["data"][account]:
                     entry_data["data"][account]["recurring_expenses"] = []
-                
                 entry_data["data"][account]["recurring_expenses"].append(item)
-                
-                # Create an actual expense item for the current month if we're before or on the specified day
                 current_day = datetime.now().day
                 if current_day <= day_of_month:
                     new_item = {
@@ -728,70 +625,60 @@ def register_services(hass: HomeAssistant):
                         "timestamp": datetime.now().isoformat(),
                         "recurring_id": item_id,
                     }
-                    
-                    # Add to expense items
                     if "expense_items" not in entry_data["data"][account]:
                         entry_data["data"][account]["expense_items"] = []
-                    
                     entry_data["data"][account]["expense_items"].append(new_item)
-                    
-                    # Update total expenses
-                    entry_data["data"][account]["expenses"] = sum(
-                        item["amount"] for item in entry_data["data"][account]["expense_items"]
-                    )
-                    
-                    # Update balance
-                    entry_data["data"][account]["balance"] = (
-                        entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
-                    )
-                
-                # Save the updated data
+                total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
+                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
+                entry_data["data"][account]["expenses"] = total_items + total_recurrents
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
+                )
                 entry = hass.config_entries.async_get_entry(entry_id)
                 await save_data(hass, entry)
-                
-                # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
-        
         _LOGGER.warning("Account %s not found", account)
 
     async def handle_remove_recurring_item(call):
-        """Handle the remove_recurring_item service."""
+        """
+        Supprime un item récurrent (revenu ou dépense) et met à jour les totaux et le solde.
+        """
         account = call.data.get(ATTR_ACCOUNT, "default")
         item_id = call.data.get(ATTR_ITEM_ID)
-        
         if not item_id:
             _LOGGER.warning("No item ID provided")
             return
-            
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
+                updated = False
                 # Check in recurring income items
                 if "recurring_income" in entry_data["data"][account]:
                     for i, item in enumerate(entry_data["data"][account]["recurring_income"]):
                         if item.get("id") == item_id:
-                            # Remove item
                             entry_data["data"][account]["recurring_income"].pop(i)
-                            
-                            # Save and update
-                            entry = hass.config_entries.async_get_entry(entry_id)
-                            await save_data(hass, entry)
-                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
-                            return
-
+                            updated = True
+                            break
                 # Check in recurring expense items
                 if "recurring_expenses" in entry_data["data"][account]:
                     for i, item in enumerate(entry_data["data"][account]["recurring_expenses"]):
                         if item.get("id") == item_id:
-                            # Remove item
                             entry_data["data"][account]["recurring_expenses"].pop(i)
-                            
-                            # Save and update
-                            entry = hass.config_entries.async_get_entry(entry_id)
-                            await save_data(hass, entry)
-                            async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
-                            return
-        
+                            updated = True
+                            break
+                if updated:
+                    # Recalcule les totaux après suppression
+                    total_income_items = sum(i["amount"] for i in entry_data["data"][account].get("income_items", []))
+                    total_income_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_income", []))
+                    entry_data["data"][account]["income"] = total_income_items + total_income_recurrents
+                    total_expense_items = sum(i["amount"] for i in entry_data["data"][account].get("expense_items", []))
+                    total_expense_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
+                    entry_data["data"][account]["expenses"] = total_expense_items + total_expense_recurrents
+                    entry_data["data"][account]["balance"] = entry_data["data"][account]["income"] - entry_data["data"][account]["expenses"]
+                    entry = hass.config_entries.async_get_entry(entry_id)
+                    await save_data(hass, entry)
+                    async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
+                    return
         _LOGGER.warning("Recurring item %s not found for account %s", item_id, account)
 
     # Register new item services
@@ -887,7 +774,9 @@ def register_services(hass: HomeAssistant):
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 async def notify_data_update(hass, entry_id, account=None):
-    """Notify all components about data updates."""
+    """
+    Notifie tous les composants d'une mise à jour des données (sensors et frontend).
+    """
     # Use the dispatcher for sensor updates
     async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
     

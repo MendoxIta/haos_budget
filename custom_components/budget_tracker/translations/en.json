@@ -36,8 +36,7 @@
   "selector": {
     "storage_type": {
       "options": {
-        "file": "File Storage",
-        "input_text": "Input Text Entities"
+        "file": "File Storage"
       }
     }
   },
