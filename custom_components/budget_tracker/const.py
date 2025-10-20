@@ -41,6 +41,7 @@ ATTR_CATEGORY = "category"
 ATTR_RECURRING_INCOMES = "recurring_incomes"
 ATTR_RECURRING_EXPENSES = "recurring_expenses"
 ATTR_DAY_OF_MONTH = "day_of_month"
+ATTR_END_DATE = "end_date"
 
 # Sensor names
 INCOME_SENSOR = "income_current_month"

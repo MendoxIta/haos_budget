@@ -54,6 +54,7 @@ from .const import (
     ATTR_RECURRING_INCOMES,
     ATTR_RECURRING_EXPENSES,
     ATTR_DAY_OF_MONTH,
+    ATTR_END_DATE,
     DATA_STORAGE_FILE,
     EVENT_MONTH_CHANGED,
 )
@@ -79,20 +80,22 @@ def _write_json_file(file_path, data):
 
 
 
-async def remove_device_node_from_storage(account_name):
+async def remove_device_node_from_storage(hass: HomeAssistant, account_name: str):
     """
     Remove the node for the account in DATA_STORAGE_FILE if present.
     """
-    if not os.path.exists(DATA_STORAGE_FILE):
+    file_path = get_storage_path(hass)
+    if not os.path.exists(file_path):
         return False
     try:
-        data = await hass.async_add_executor_job(_read_json_file, DATA_STORAGE_FILE)
+        data = await hass.async_add_executor_job(_read_json_file, file_path)
         if account_name in data:
             del data[account_name]
-            await hass.async_add_executor_job(_write_json_file, DATA_STORAGE_FILE, data)
+            await hass.async_add_executor_job(_write_json_file, file_path, data)
             return True
         return False
-    except Exception:
+    except Exception as err:
+        _LOGGER.error("Failed to remove account %s from storage: %s", account_name, err)
         return False
 
 # ---------------------- SETUP PRINCIPAL ----------------------
@@ -135,6 +138,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Load existing data
     await load_data(hass, entry)
+
+    # Synchronize recurring items with current month items
+    await sync_recurring_items(hass, entry)
 
     # Register services
     register_services(hass)
@@ -184,7 +190,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
         # Remove storage file if using file storage
         if entry.data.get(CONF_STORAGE_TYPE, DEFAULT_STORAGE_TYPE) == STORAGE_TYPE_FILE:
-            await remove_device_node_from_storage(entry.data.get(CONF_ACCOUNTS, ["default"])[0])
+            accounts = entry.data.get(CONF_ACCOUNTS, ["default"])
+            for account in accounts:
+                await remove_device_node_from_storage(hass, account)
 
     return unload_ok
 
@@ -224,19 +232,131 @@ async def save_data(hass: HomeAssistant, entry: ConfigEntry):
         except Exception as err:
             _LOGGER.error("Failed to save budget data: %s", err)
 
+async def sync_recurring_items(hass: HomeAssistant, entry: ConfigEntry):
+    """
+    Synchronise les items récurrents avec les items du mois en cours.
+    Crée les items manquants pour tous les récurrents qui n'ont pas encore d'item ce mois-ci.
+    Vérifie la date de fin (end_date) avant de créer les items.
+    """
+    _LOGGER.info("Synchronizing recurring items with current month items")
+    accounts = entry.data.get(CONF_ACCOUNTS, ["default"])
+    updated = False
+    now = datetime.now()
+    
+    for account in accounts:
+        account_data = hass.data[DOMAIN][entry.entry_id]["data"].get(account, {})
+        
+        # Get existing recurring_ids in current month items
+        income_recurring_ids = {
+            item.get("recurring_id") 
+            for item in account_data.get("income_items", []) 
+            if item.get("recurring_id")
+        }
+        expense_recurring_ids = {
+            item.get("recurring_id") 
+            for item in account_data.get("expense_items", []) 
+            if item.get("recurring_id")
+        }
+        
+        # Check recurring incomes
+        if "recurring_incomes" in account_data:
+            for recurring_item in account_data["recurring_incomes"]:
+                recurring_id = recurring_item.get("id")
+                
+                # Check if end_date is in the past
+                end_date = recurring_item.get("end_date")
+                if end_date:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if now > end_dt:
+                            _LOGGER.debug("Skipping expired recurring income %s (end_date: %s)", recurring_id, end_date)
+                            continue
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring income %s: %s", recurring_id, err)
+                
+                if recurring_id not in income_recurring_ids:
+                    # Create missing item
+                    new_item = {
+                        "id": str(uuid.uuid4()),
+                        "amount": recurring_item["amount"],
+                        "description": recurring_item["description"],
+                        "category": recurring_item.get("category", ""),
+                        "timestamp": now.isoformat(),
+                        "recurring_id": recurring_id,
+                    }
+                    if "income_items" not in account_data:
+                        account_data["income_items"] = []
+                    account_data["income_items"].append(new_item)
+                    _LOGGER.info("Created missing income item for recurring %s in account %s (amount: %.2f)", 
+                                 recurring_id, account, recurring_item["amount"])
+                    updated = True
+        
+        # Check recurring expenses
+        if "recurring_expenses" in account_data:
+            for recurring_item in account_data["recurring_expenses"]:
+                recurring_id = recurring_item.get("id")
+                
+                # Check if end_date is in the past
+                end_date = recurring_item.get("end_date")
+                if end_date:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if now > end_dt:
+                            _LOGGER.debug("Skipping expired recurring expense %s (end_date: %s)", recurring_id, end_date)
+                            continue
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring expense %s: %s", recurring_id, err)
+                
+                if recurring_id not in expense_recurring_ids:
+                    # Create missing item
+                    new_item = {
+                        "id": str(uuid.uuid4()),
+                        "amount": recurring_item["amount"],
+                        "description": recurring_item["description"],
+                        "category": recurring_item.get("category", ""),
+                        "timestamp": now.isoformat(),
+                        "recurring_id": recurring_id,
+                    }
+                    if "expense_items" not in account_data:
+                        account_data["expense_items"] = []
+                    account_data["expense_items"].append(new_item)
+                    _LOGGER.info("Created missing expense item for recurring %s in account %s (amount: %.2f)", 
+                                 recurring_id, account, recurring_item["amount"])
+                    updated = True
+        
+        # Recalculate totals if items were added
+        if updated:
+            account_data["income"] = sum(i["amount"] for i in account_data.get("income_items", []))
+            account_data["expenses"] = sum(i["amount"] for i in account_data.get("expense_items", []))
+            account_data["balance"] = account_data["income"] - account_data["expenses"]
+            hass.data[DOMAIN][entry.entry_id]["data"][account] = account_data
+    
+    # Save if any changes were made
+    if updated:
+        await save_data(hass, entry)
+        _LOGGER.info("Recurring items synchronization completed with updates")
+    else:
+        _LOGGER.debug("Recurring items synchronization completed - no changes needed")
+
 async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
     """
     Archive les données du mois courant et réinitialise pour le nouveau mois.
     Applique les revenus et dépenses récurrents.
     Les totaux incluent les récurrents.
     """
+    _LOGGER.info("Starting monthly archive and reset process")
     now = datetime.now()
     last_month = now.replace(day=1) - timedelta(days=1)
     year_month_key = f"{last_month.year}_{last_month.month:02d}"
+    _LOGGER.info("Archiving data for %s", year_month_key)
+    
     for account in entry.data.get(CONF_ACCOUNTS, ["default"]):
+        _LOGGER.debug("Processing account: %s", account)
         account_data = hass.data[DOMAIN][entry.entry_id]["data"].get(account, {})
         if "history" not in account_data:
             account_data["history"] = {}
+        
+        # Archive current month data
         account_data["history"][year_month_key] = {
             "income": account_data.get("income", 0),
             "expenses": account_data.get("expenses", 0),
@@ -244,45 +364,78 @@ async def archive_and_reset_data(hass: HomeAssistant, entry: ConfigEntry):
             "income_items": account_data.get("income_items", []),
             "expense_items": account_data.get("expense_items", []),
         }
+        _LOGGER.info("Archived %s: income=%.2f, expenses=%.2f, balance=%.2f", 
+                     account, account_data.get("income", 0), account_data.get("expenses", 0), account_data.get("balance", 0))
+        
+        # Reset current month
         account_data["income"] = 0
         account_data["expenses"] = 0
         account_data["balance"] = 0
         account_data["income_items"] = []
         account_data["expense_items"] = []
-        if "s" in account_data:
+        
+        # Apply recurring incomes
+        if "recurring_incomes" in account_data:
+            recurring_count = len(account_data["recurring_incomes"])
+            _LOGGER.debug("Applying %d recurring income(s) for account %s", recurring_count, account)
             for recurring_item in account_data["recurring_incomes"]:
+                # Check if end_date has passed
+                end_date = recurring_item.get("end_date")
+                if end_date:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if now > end_dt:
+                            _LOGGER.debug("Skipping expired recurring income %s (end_date: %s)", recurring_item["id"], end_date)
+                            continue
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring income %s: %s", recurring_item["id"], err)
+                
                 new_item = {
                     "id": str(uuid.uuid4()),
                     "amount": recurring_item["amount"],
                     "description": recurring_item["description"],
                     "category": recurring_item["category"],
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": now.isoformat(),
                     "recurring_id": recurring_item["id"],
                 }
                 account_data["income_items"].append(new_item)
-        total_items = sum(i["amount"] for i in account_data["income_items"])
-        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_incomes", []))
-        account_data["income"] = total_items + total_recurrents
+        # Update total income (only items, récurrents are already in items)
+        account_data["income"] = sum(i["amount"] for i in account_data["income_items"])
         if "recurring_expenses" in account_data:
             for recurring_item in account_data["recurring_expenses"]:
+                # Check if end_date has passed
+                end_date = recurring_item.get("end_date")
+                if end_date:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if now > end_dt:
+                            _LOGGER.debug("Skipping expired recurring expense %s (end_date: %s)", recurring_item["id"], end_date)
+                            continue
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring expense %s: %s", recurring_item["id"], err)
+                
                 new_item = {
                     "id": str(uuid.uuid4()),
                     "amount": recurring_item["amount"],
                     "description": recurring_item["description"],
                     "category": recurring_item["category"],
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": now.isoformat(),
                     "recurring_id": recurring_item["id"],
                 }
                 account_data["expense_items"].append(new_item)
-        total_items = sum(i["amount"] for i in account_data["expense_items"])
-        total_recurrents = sum(i["amount"] for i in account_data.get("recurring_expenses", []))
-        account_data["expenses"] = total_items + total_recurrents
+        # Update total expenses (only items, récurrents are already in items)
+        account_data["expenses"] = sum(i["amount"] for i in account_data["expense_items"])
         account_data["balance"] = account_data["income"] - account_data["expenses"]
+        
+        _LOGGER.info("New month initialized for %s: income=%.2f, expenses=%.2f, balance=%.2f", 
+                     account, account_data["income"], account_data["expenses"], account_data["balance"])
         hass.data[DOMAIN][entry.entry_id]["data"][account] = account_data
     new_data = dict(entry.data)
     new_data["last_reset"] = now.isoformat()
     hass.config_entries.async_update_entry(entry, data=new_data)
     await save_data(hass, entry)
+    
+    _LOGGER.info("Monthly archive and reset completed successfully")
     hass.bus.async_fire(
         EVENT_MONTH_CHANGED, 
         {"month": last_month.month, "year": last_month.year}
@@ -306,12 +459,25 @@ def register_services(hass: HomeAssistant):
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 # Instead of setting the total directly, add an income item
-                await handle_add_income_item(vol.Schema({
-                    ATTR_ACCOUNT: account,
-                    ATTR_AMOUNT: amount,
-                    ATTR_DESCRIPTION: "Income Entry (via deprecated service)",
-                    ATTR_CATEGORY: "Legacy"
-                }))
+                item_id = str(uuid.uuid4())
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": "Income Entry (via deprecated service)",
+                    "category": "Legacy",
+                    "timestamp": datetime.now().isoformat(),
+                }
+                if "income_items" not in entry_data["data"][account]:
+                    entry_data["data"][account]["income_items"] = []
+                entry_data["data"][account]["income_items"].append(item)
+                entry_data["data"][account]["income"] = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
+                )
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                await load_data(hass, entry)
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
         
         _LOGGER.warning("Account %s not found", account)
@@ -328,12 +494,25 @@ def register_services(hass: HomeAssistant):
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 # Instead of setting the total directly, add an expense item
-                await handle_add_expense_item(vol.Schema({
-                    ATTR_ACCOUNT: account,
-                    ATTR_AMOUNT: amount,
-                    ATTR_DESCRIPTION: "Expense Entry (via deprecated service)",
-                    ATTR_CATEGORY: "Legacy"
-                }))
+                item_id = str(uuid.uuid4())
+                item = {
+                    "id": item_id,
+                    "amount": amount,
+                    "description": "Expense Entry (via deprecated service)",
+                    "category": "Legacy",
+                    "timestamp": datetime.now().isoformat(),
+                }
+                if "expense_items" not in entry_data["data"][account]:
+                    entry_data["data"][account]["expense_items"] = []
+                entry_data["data"][account]["expense_items"].append(item)
+                entry_data["data"][account]["expenses"] = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
+                entry_data["data"][account]["balance"] = (
+                    entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
+                )
+                entry = hass.config_entries.async_get_entry(entry_id)
+                await save_data(hass, entry)
+                await load_data(hass, entry)
+                async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
         
         _LOGGER.warning("Account %s not found", account)
@@ -379,10 +558,8 @@ def register_services(hass: HomeAssistant):
                 if "income_items" not in entry_data["data"][account]:
                     entry_data["data"][account]["income_items"] = []
                 entry_data["data"][account]["income_items"].append(item)
-                # Update total income (items + récurrents)
-                total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
-                entry_data["data"][account]["income"] = total_items + total_recurrents
+                # Update total income (only items, no separate recurring total)
+                entry_data["data"][account]["income"] = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
                 # Update balance
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
@@ -394,6 +571,7 @@ def register_services(hass: HomeAssistant):
                 # Recharge les données depuis le fichier pour garantir la cohérence en mémoire
                 await load_data(hass, entry)
 
+                _LOGGER.debug("Added income item %.2f for account %s (new total: %.2f)", amount, account, entry_data["data"][account]["income"])
                 # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
@@ -424,10 +602,8 @@ def register_services(hass: HomeAssistant):
                 if "expense_items" not in entry_data["data"][account]:
                     entry_data["data"][account]["expense_items"] = []
                 entry_data["data"][account]["expense_items"].append(item)
-                # Update total expenses (items + récurrents)
-                total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
-                entry_data["data"][account]["expenses"] = total_items + total_recurrents
+                # Update total expenses (only items, no separate recurring total)
+                entry_data["data"][account]["expenses"] = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
                 # Update balance
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
@@ -437,6 +613,8 @@ def register_services(hass: HomeAssistant):
                 await save_data(hass, entry)
                 # Recharge les données depuis le fichier pour garantir la cohérence en mémoire
                 await load_data(hass, entry)
+                
+                _LOGGER.debug("Added expense item %.2f for account %s (new total: %.2f)", amount, account, entry_data["data"][account]["expenses"])
                 # Notify sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                 return
@@ -459,14 +637,14 @@ def register_services(hass: HomeAssistant):
                     for i, item in enumerate(entry_data["data"][account]["income_items"]):
                         if item.get("id") == item_id:
                             entry_data["data"][account]["income_items"].pop(i)
-                            total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
-                            entry_data["data"][account]["income"] = total_items + total_recurrents
+                            # Recalculate total income (only items)
+                            entry_data["data"][account]["income"] = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
                             entry_data["data"][account]["balance"] = (
                                 entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
                             )
                             entry = hass.config_entries.async_get_entry(entry_id)
                             await save_data(hass, entry)
+                            _LOGGER.debug("Removed income item %s from account %s (new total: %.2f)", item_id, account, entry_data["data"][account]["income"])
                             async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                             return
                 # Check in expense items
@@ -474,14 +652,14 @@ def register_services(hass: HomeAssistant):
                     for i, item in enumerate(entry_data["data"][account]["expense_items"]):
                         if item.get("id") == item_id:
                             entry_data["data"][account]["expense_items"].pop(i)
-                            total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
-                            total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
-                            entry_data["data"][account]["expenses"] = total_items + total_recurrents
+                            # Recalculate total expenses (only items)
+                            entry_data["data"][account]["expenses"] = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
                             entry_data["data"][account]["balance"] = (
                                 entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
                             )
                             entry = hass.config_entries.async_get_entry(entry_id)
                             await save_data(hass, entry)
+                            _LOGGER.debug("Removed expense item %s from account %s (new total: %.2f)", item_id, account, entry_data["data"][account]["expenses"])
                             async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                             return
         _LOGGER.warning("Item %s not found for account %s", item_id, account)
@@ -513,9 +691,8 @@ def register_services(hass: HomeAssistant):
                         if account_data["income_items"]:
                             account_data["income_items"] = []
                             modified = True
-                    total_items = sum(i["amount"] for i in account_data.get("income_items", []))
-                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_incomes", []))
-                    account_data["income"] = total_items + total_recurrents
+                    # Recalculate total income (only items)
+                    account_data["income"] = sum(i["amount"] for i in account_data.get("income_items", []))
                 # Clear expense items if requested
                 if clear_expenses and "expense_items" in account_data:
                     if category_filter:
@@ -530,9 +707,8 @@ def register_services(hass: HomeAssistant):
                         if account_data["expense_items"]:
                             account_data["expense_items"] = []
                             modified = True
-                    total_items = sum(i["amount"] for i in account_data.get("expense_items", []))
-                    total_recurrents = sum(i["amount"] for i in account_data.get("recurring_expenses", []))
-                    account_data["expenses"] = total_items + total_recurrents
+                    # Recalculate total expenses (only items)
+                    account_data["expenses"] = sum(i["amount"] for i in account_data.get("expense_items", []))
                 account_data["balance"] = account_data.get("income", 0) - account_data.get("expenses", 0)
                 if modified:
                     entry = hass.config_entries.async_get_entry(entry_id)
@@ -545,14 +721,16 @@ def register_services(hass: HomeAssistant):
     async def handle_add_recurring_income(call):
         """
         Ajoute un revenu récurrent et crée l'item du mois si nécessaire.
-        Les totaux incluent les récurrents.
+        Supporte une date de fin optionnelle (end_date) au format YYYY-MM-DD.
         """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
         category = call.data.get(ATTR_CATEGORY, "")
         day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
+        end_date = call.data.get(ATTR_END_DATE)  # Optional, format: YYYY-MM-DD
         item_id = str(uuid.uuid4())
+        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 item = {
@@ -563,11 +741,29 @@ def register_services(hass: HomeAssistant):
                     "day_of_month": day_of_month,
                     "created_at": datetime.now().isoformat(),
                 }
+                # Add end_date if provided
+                if end_date:
+                    item["end_date"] = end_date
+                    
                 if "recurring_incomes" not in entry_data["data"][account]:
                     entry_data["data"][account]["recurring_incomes"] = []
                 entry_data["data"][account]["recurring_incomes"].append(item)
+                
+                # Check if we should create an item for current month
                 current_day = datetime.now().day
-                if current_day <= day_of_month:
+                should_create = current_day <= day_of_month
+                
+                # Check if end_date is in the past
+                if end_date and should_create:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if datetime.now() > end_dt:
+                            should_create = False
+                            _LOGGER.info("Recurring income %s not created - end_date %s is in the past", item_id, end_date)
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring income %s: %s", item_id, err)
+                
+                if should_create:
                     new_item = {
                         "id": str(uuid.uuid4()),
                         "amount": amount,
@@ -579,9 +775,8 @@ def register_services(hass: HomeAssistant):
                     if "income_items" not in entry_data["data"][account]:
                         entry_data["data"][account]["income_items"] = []
                     entry_data["data"][account]["income_items"].append(new_item)
-                total_items = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
-                entry_data["data"][account]["income"] = total_items + total_recurrents
+                # Update total income (only items, recurring items are created above)
+                entry_data["data"][account]["income"] = sum(i["amount"] for i in entry_data["data"][account]["income_items"])
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account]["income"] - entry_data["data"][account].get("expenses", 0)
                 )
@@ -594,14 +789,16 @@ def register_services(hass: HomeAssistant):
     async def handle_add_recurring_expense(call):
         """
         Ajoute une dépense récurrente et crée l'item du mois si nécessaire.
-        Les totaux incluent les récurrents.
+        Supporte une date de fin optionnelle (end_date) au format YYYY-MM-DD.
         """
         account = call.data.get(ATTR_ACCOUNT, "default")
         amount = call.data.get(ATTR_AMOUNT, 0)
         description = call.data.get(ATTR_DESCRIPTION, "")
         category = call.data.get(ATTR_CATEGORY, "")
         day_of_month = call.data.get(ATTR_DAY_OF_MONTH, 1)
+        end_date = call.data.get(ATTR_END_DATE)  # Optional, format: YYYY-MM-DD
         item_id = str(uuid.uuid4())
+        
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if account in entry_data["accounts"]:
                 item = {
@@ -612,11 +809,29 @@ def register_services(hass: HomeAssistant):
                     "day_of_month": day_of_month,
                     "created_at": datetime.now().isoformat(),
                 }
+                # Add end_date if provided
+                if end_date:
+                    item["end_date"] = end_date
+                    
                 if "recurring_expenses" not in entry_data["data"][account]:
                     entry_data["data"][account]["recurring_expenses"] = []
                 entry_data["data"][account]["recurring_expenses"].append(item)
+                
+                # Check if we should create an item for current month
                 current_day = datetime.now().day
-                if current_day <= day_of_month:
+                should_create = current_day <= day_of_month
+                
+                # Check if end_date is in the past
+                if end_date and should_create:
+                    try:
+                        end_dt = datetime.fromisoformat(end_date)
+                        if datetime.now() > end_dt:
+                            should_create = False
+                            _LOGGER.info("Recurring expense %s not created - end_date %s is in the past", item_id, end_date)
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.warning("Invalid end_date format for recurring expense %s: %s", item_id, err)
+                
+                if should_create:
                     new_item = {
                         "id": str(uuid.uuid4()),
                         "amount": amount,
@@ -628,9 +843,8 @@ def register_services(hass: HomeAssistant):
                     if "expense_items" not in entry_data["data"][account]:
                         entry_data["data"][account]["expense_items"] = []
                     entry_data["data"][account]["expense_items"].append(new_item)
-                total_items = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
-                total_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
-                entry_data["data"][account]["expenses"] = total_items + total_recurrents
+                # Update total expenses (only items, recurring items are created above)
+                entry_data["data"][account]["expenses"] = sum(i["amount"] for i in entry_data["data"][account]["expense_items"])
                 entry_data["data"][account]["balance"] = (
                     entry_data["data"][account].get("income", 0) - entry_data["data"][account]["expenses"]
                 )
@@ -643,6 +857,7 @@ def register_services(hass: HomeAssistant):
     async def handle_remove_recurring_item(call):
         """
         Supprime un item récurrent (revenu ou dépense) et met à jour les totaux et le solde.
+        Supprime aussi tous les items du mois en cours liés à ce récurrent.
         """
         account = call.data.get(ATTR_ACCOUNT, "default")
         item_id = call.data.get(ATTR_ITEM_ID)
@@ -657,26 +872,38 @@ def register_services(hass: HomeAssistant):
                     for i, item in enumerate(entry_data["data"][account]["recurring_incomes"]):
                         if item.get("id") == item_id:
                             entry_data["data"][account]["recurring_incomes"].pop(i)
+                            # Remove all income items linked to this recurring
+                            if "income_items" in entry_data["data"][account]:
+                                entry_data["data"][account]["income_items"] = [
+                                    it for it in entry_data["data"][account]["income_items"]
+                                    if it.get("recurring_id") != item_id
+                                ]
                             updated = True
+                            _LOGGER.debug("Removed recurring income %s and its related items from account %s", item_id, account)
                             break
                 # Check in recurring expense items
                 if "recurring_expenses" in entry_data["data"][account]:
                     for i, item in enumerate(entry_data["data"][account]["recurring_expenses"]):
                         if item.get("id") == item_id:
                             entry_data["data"][account]["recurring_expenses"].pop(i)
+                            # Remove all expense items linked to this recurring
+                            if "expense_items" in entry_data["data"][account]:
+                                entry_data["data"][account]["expense_items"] = [
+                                    it for it in entry_data["data"][account]["expense_items"]
+                                    if it.get("recurring_id") != item_id
+                                ]
                             updated = True
+                            _LOGGER.debug("Removed recurring expense %s and its related items from account %s", item_id, account)
                             break
                 if updated:
-                    # Recalcule les totaux après suppression
-                    total_income_items = sum(i["amount"] for i in entry_data["data"][account].get("income_items", []))
-                    total_income_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_incomes", []))
-                    entry_data["data"][account]["income"] = total_income_items + total_income_recurrents
-                    total_expense_items = sum(i["amount"] for i in entry_data["data"][account].get("expense_items", []))
-                    total_expense_recurrents = sum(i["amount"] for i in entry_data["data"][account].get("recurring_expenses", []))
-                    entry_data["data"][account]["expenses"] = total_expense_items + total_expense_recurrents
+                    # Recalculate totals after removal (only items)
+                    entry_data["data"][account]["income"] = sum(i["amount"] for i in entry_data["data"][account].get("income_items", []))
+                    entry_data["data"][account]["expenses"] = sum(i["amount"] for i in entry_data["data"][account].get("expense_items", []))
                     entry_data["data"][account]["balance"] = entry_data["data"][account]["income"] - entry_data["data"][account]["expenses"]
                     entry = hass.config_entries.async_get_entry(entry_id)
                     await save_data(hass, entry)
+                    _LOGGER.info("Removed recurring item %s from account %s (new income: %.2f, new expenses: %.2f)", 
+                                 item_id, account, entry_data["data"][account]["income"], entry_data["data"][account]["expenses"])
                     async_dispatcher_send(hass, f"{DOMAIN}_data_updated_{entry_id}")
                     return
         _LOGGER.warning("Recurring item %s not found for account %s", item_id, account)
@@ -729,6 +956,7 @@ def register_services(hass: HomeAssistant):
             vol.Optional(ATTR_DAY_OF_MONTH, default=1): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=31)
             ),
+            vol.Optional(ATTR_END_DATE): cv.string,  # Format: YYYY-MM-DD
         })
     )
     
@@ -744,6 +972,7 @@ def register_services(hass: HomeAssistant):
             vol.Optional(ATTR_DAY_OF_MONTH, default=1): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=31)
             ),
+            vol.Optional(ATTR_END_DATE): cv.string,  # Format: YYYY-MM-DD
         })
     )
     

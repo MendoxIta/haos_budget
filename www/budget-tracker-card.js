@@ -170,6 +170,9 @@ class BudgetTrackerCard extends HTMLElement {
       case 'recurring':
         content = this._renderRecurringTab(account);
         break;
+      case 'history':
+        content = this._renderHistoryTab(account);
+        break;
       default:
         content = this._renderOverview(account);
     }
@@ -200,6 +203,7 @@ class BudgetTrackerCard extends HTMLElement {
               <button class="tab-btn${this._currentTab === 'income' ? ' active' : ''}" data-tab="income">Revenus</button>
               <button class="tab-btn${this._currentTab === 'expenses' ? ' active' : ''}" data-tab="expenses">Dépenses</button>
               <button class="tab-btn${this._currentTab === 'recurring' ? ' active' : ''}" data-tab="recurring">Récurrents</button>
+              <button class="tab-btn${this._currentTab === 'history' ? ' active' : ''}" data-tab="history">Historique</button>
             </div>
           </div>
           ${content}
@@ -502,6 +506,34 @@ class BudgetTrackerCard extends HTMLElement {
           opacity: 0.5;
           pointer-events: none;
         }
+        .history-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+        .month-selector {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .month-selector label {
+          margin-bottom: 0;
+          font-size: 0.9em;
+          white-space: nowrap;
+        }
+        .month-selector select {
+          min-width: 150px;
+        }
+        .end-date-badge {
+          background-color: rgba(255, 152, 0, 0.2);
+          color: var(--primary-text-color);
+          font-size: 0.75em;
+          padding: 2px 6px;
+          border-radius: 4px;
+          margin-left: 8px;
+          border: 1px solid rgba(255, 152, 0, 0.5);
+        }
       </style>
     `;
     
@@ -657,7 +689,10 @@ class BudgetTrackerCard extends HTMLElement {
               <span class="day-of-month">${item.day_of_month || 1}</span>
               <div class="item-details">
                 <div class="item-description">${item.description || 'Sans description'}</div>
-                <div class="item-category">${item.category || 'Sans catégorie'}</div>
+                <div class="item-category">
+                  ${item.category || 'Sans catégorie'}
+                  ${item.end_date ? `<span class="end-date-badge">Fin: ${item.end_date}</span>` : ''}
+                </div>
               </div>
               <div class="item-amount income">+${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
@@ -678,7 +713,10 @@ class BudgetTrackerCard extends HTMLElement {
               <span class="day-of-month">${item.day_of_month || 1}</span>
               <div class="item-details">
                 <div class="item-description">${item.description || 'Sans description'}</div>
-                <div class="item-category">${item.category || 'Sans catégorie'}</div>
+                <div class="item-category">
+                  ${item.category || 'Sans catégorie'}
+                  ${item.end_date ? `<span class="end-date-badge">Fin: ${item.end_date}</span>` : ''}
+                </div>
               </div>
               <div class="item-amount expenses">-${parseFloat(item.amount).toFixed(2)} €</div>
               <div class="item-actions">
@@ -693,6 +731,127 @@ class BudgetTrackerCard extends HTMLElement {
       <button class="btn">Ajouter un revenu récurrent</button>
       <button class="btn" style="margin-left: 8px;">Ajouter une dépense récurrente</button>
     `;
+  }
+
+  _renderHistoryTab(account) {
+    // Récupérer les données d'archive depuis les attributs de l'entité
+    const incomeSensor = this._hass.states[account.entities.income];
+    const expenseSensor = this._hass.states[account.entities.expenses];
+    const balanceSensor = this._hass.states[account.entities.balance];
+    
+    const archivedMonths = (incomeSensor && incomeSensor.attributes.archived_months) 
+      ? incomeSensor.attributes.archived_months 
+      : [];
+    
+    // Initialiser le mois sélectionné si nécessaire
+    if (!this._selectedHistoryMonth && archivedMonths.length > 0) {
+      this._selectedHistoryMonth = archivedMonths[archivedMonths.length - 1];
+    }
+    
+    if (archivedMonths.length === 0) {
+      return `
+        <div class="empty-state">
+          <p>Aucun historique disponible.</p>
+          <p>Les données des mois précédents apparaîtront ici après l'archivage automatique.</p>
+        </div>
+      `;
+    }
+    
+    // Trouver les données du mois sélectionné
+    let selectedMonthData = null;
+    if (this._selectedHistoryMonth && incomeSensor && incomeSensor.attributes.archived_data) {
+      selectedMonthData = incomeSensor.attributes.archived_data[this._selectedHistoryMonth];
+    }
+    
+    // Si pas de données, prendre le dernier mois disponible
+    if (!selectedMonthData && archivedMonths.length > 0) {
+      const lastMonth = archivedMonths[archivedMonths.length - 1];
+      this._selectedHistoryMonth = lastMonth;
+      if (incomeSensor && incomeSensor.attributes.archived_data) {
+        selectedMonthData = incomeSensor.attributes.archived_data[lastMonth];
+      }
+    }
+    
+    // Extraire les données ou utiliser des valeurs par défaut
+    const incomeItems = selectedMonthData?.income_items || [];
+    const expenseItems = selectedMonthData?.expense_items || [];
+    const totalIncome = selectedMonthData?.total_income || 0;
+    const totalExpenses = selectedMonthData?.total_expenses || 0;
+    const balance = selectedMonthData?.balance || 0;
+    
+    return `
+      <div class="history-header">
+        <h3>Historique</h3>
+        <div class="month-selector">
+          <label for="history-month">Sélectionner un mois:</label>
+          <select id="history-month">
+            ${archivedMonths.slice().reverse().map(month => `
+              <option value="${month}" ${month === this._selectedHistoryMonth ? 'selected' : ''}>
+                ${this._formatMonthLabel(month)}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+      </div>
+      
+      <div class="summary-boxes">
+        <div class="summary-box income">
+          <div class="label">Revenus</div>
+          <div class="amount positive">${parseFloat(totalIncome).toFixed(2)} €</div>
+        </div>
+        <div class="summary-box expenses">
+          <div class="label">Dépenses</div>
+          <div class="amount negative">${parseFloat(totalExpenses).toFixed(2)} €</div>
+        </div>
+        <div class="summary-box balance">
+          <div class="label">Solde</div>
+          <div class="amount ${parseFloat(balance) >= 0 ? 'positive' : 'negative'}">${parseFloat(balance).toFixed(2)} €</div>
+        </div>
+      </div>
+
+      <h3>Revenus (${incomeItems.length})</h3>
+      <div class="items-list">
+        ${incomeItems.length > 0 
+          ? incomeItems.map(item => `
+            <div class="item">
+              <div class="item-details">
+                <div class="item-description">${item.description || 'Sans description'}</div>
+                <div class="item-category">${item.category || 'Sans catégorie'}</div>
+              </div>
+              <div class="item-amount income">+${parseFloat(item.amount).toFixed(2)} €</div>
+            </div>
+          `).join('')
+          : `<div class="empty-state">Aucun revenu ce mois-là</div>`
+        }
+      </div>
+
+      <h3>Dépenses (${expenseItems.length})</h3>
+      <div class="items-list">
+        ${expenseItems.length > 0 
+          ? expenseItems.map(item => `
+            <div class="item">
+              <div class="item-details">
+                <div class="item-description">${item.description || 'Sans description'}</div>
+                <div class="item-category">${item.category || 'Sans catégorie'}</div>
+              </div>
+              <div class="item-amount expenses">-${parseFloat(item.amount).toFixed(2)} €</div>
+            </div>
+          `).join('')
+          : `<div class="empty-state">Aucune dépense ce mois-là</div>`
+        }
+      </div>
+    `;
+  }
+
+  _formatMonthLabel(monthKey) {
+    // Format: "YYYY-MM" -> "Mois Année"
+    const [year, month] = monthKey.split('-');
+    const monthNames = [
+      'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+    ];
+    const monthIndex = parseInt(month, 10) - 1;
+    return `${monthNames[monthIndex]} ${year}`;
   }
 
   _renderAddItemForm(type) {
@@ -777,9 +936,15 @@ class BudgetTrackerCard extends HTMLElement {
             <input type="text" id="category" placeholder="Catégorie (optionnel)" />
           </div>
         </div>
-        <div class="form-group">
-          <label for="day_of_month">Jour du mois</label>
-          <input type="number" id="day_of_month" min="1" max="31" value="1" />
+        <div class="form-row">
+          <div class="form-group">
+            <label for="day_of_month">Jour du mois</label>
+            <input type="number" id="day_of_month" min="1" max="31" value="1" />
+          </div>
+          <div class="form-group">
+            <label for="end_date">Date de fin (optionnel)</label>
+            <input type="date" id="end_date" placeholder="YYYY-MM-DD" />
+          </div>
         </div>
         <button type="button" class="btn save-btn">Enregistrer</button>
         <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
@@ -820,9 +985,15 @@ class BudgetTrackerCard extends HTMLElement {
             <input type="text" id="category" placeholder="Catégorie (optionnel)" value="${item.category || ''}" />
           </div>
         </div>
-        <div class="form-group">
-          <label for="day_of_month">Jour du mois</label>
-          <input type="number" id="day_of_month" min="1" max="31" value="${item.day_of_month || 1}" />
+        <div class="form-row">
+          <div class="form-group">
+            <label for="day_of_month">Jour du mois</label>
+            <input type="number" id="day_of_month" min="1" max="31" value="${item.day_of_month || 1}" />
+          </div>
+          <div class="form-group">
+            <label for="end_date">Date de fin (optionnel)</label>
+            <input type="date" id="end_date" placeholder="YYYY-MM-DD" value="${item.end_date || ''}" />
+          </div>
         </div>
         <button type="button" class="btn update-btn">Mettre à jour</button>
         <button type="button" class="btn" style="background-color: #888; margin-left: 8px;">Annuler</button>
@@ -1025,6 +1196,14 @@ class BudgetTrackerCard extends HTMLElement {
         }, { once: true });
         return;
       }
+      // Gestion du sélecteur de mois dans l'historique
+      if (target.id === 'history-month') {
+        target.addEventListener('change', (event) => {
+          this._selectedHistoryMonth = event.target.value;
+          this._render();
+        }, { once: true });
+        return;
+      }
       // Gestion du bouton de rafraîchissement
       if (target.classList.contains('refresh-button')) {
         this._refreshData();
@@ -1122,6 +1301,7 @@ class BudgetTrackerCard extends HTMLElement {
     const amount = parseFloat(this.shadowRoot.querySelector('#amount').value);
     const category = this.shadowRoot.querySelector('#category').value;
     const dayOfMonth = parseInt(this.shadowRoot.querySelector('#day_of_month').value, 10) || 1;
+    const endDate = this.shadowRoot.querySelector('#end_date').value;
 
     if (isNaN(amount) || amount <= 0) {
       alert('Veuillez saisir un montant valide.');
@@ -1137,17 +1317,25 @@ class BudgetTrackerCard extends HTMLElement {
     const serviceType = this._recurringType === 'income' ? 'add_recurring_income' : 'add_recurring_expense';
     const itemType = this._recurringType === 'income' ? 'revenu récurrent' : 'dépense récurrente';
 
+    // Construire les données du service
+    const serviceData = {
+      account: this._currentAccount,
+      amount: amount,
+      description: description,
+      category: category,
+      day_of_month: dayOfMonth
+    };
+
+    // Ajouter end_date seulement s'il est défini
+    if (endDate) {
+      serviceData.end_date = endDate;
+    }
+
     // Utiliser notre méthode centralisée
     this._callService(
       'budget_tracker', 
       serviceType, 
-      {
-        account: this._currentAccount,
-        amount: amount,
-        description: description,
-        category: category,
-        day_of_month: dayOfMonth
-      },
+      serviceData,
       `l'ajout d'un élément de ${itemType}`
     );
   }
@@ -1202,6 +1390,7 @@ class BudgetTrackerCard extends HTMLElement {
     const amount = parseFloat(this.shadowRoot.querySelector('#amount').value);
     const category = this.shadowRoot.querySelector('#category').value;
     const dayOfMonth = parseInt(this.shadowRoot.querySelector('#day_of_month').value, 10) || 1;
+    const endDate = this.shadowRoot.querySelector('#end_date').value;
 
     if (isNaN(amount) || amount <= 0) {
       alert('Veuillez saisir un montant valide.');
@@ -1232,16 +1421,25 @@ class BudgetTrackerCard extends HTMLElement {
     ).then(() => {
       // Une fois la suppression réussie, ajouter le nouvel élément
       const serviceType = isIncome ? 'add_recurring_income' : 'add_recurring_expense';
+      
+      // Construire les données du service
+      const serviceData = {
+        account: this._currentAccount,
+        amount: amount,
+        description: description,
+        category: category,
+        day_of_month: dayOfMonth
+      };
+
+      // Ajouter end_date seulement s'il est défini
+      if (endDate) {
+        serviceData.end_date = endDate;
+      }
+
       return this._callService(
         'budget_tracker',
         serviceType,
-        {
-          account: this._currentAccount,
-          amount: amount,
-          description: description,
-          category: category,
-          day_of_month: dayOfMonth
-        },
+        serviceData,
         `l'ajout du nouvel élément de ${itemType}`
       );
     });
